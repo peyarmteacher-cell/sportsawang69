@@ -1,0 +1,26 @@
+# ==============================================================================
+# Apache Configuration for PHP Sports Competition Management System
+# ==============================================================================
+
+# Enable UTF-8 encoding
+AddDefaultCharset UTF-8
+php_value default_charset "UTF-8"
+
+# Security Headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set X-Frame-Options "SAMEORIGIN"
+</IfModule>
+
+# Directory Index
+DirectoryIndex index.php index.html
+
+# Prevent Directory Browsing
+Options -Indexes
+
+# Protect sensitive files
+<FilesMatch "(\.(sql|env|json|lock)|database\.sql)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

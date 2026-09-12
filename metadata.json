@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix ระบบบริหารจัดการแข่งขันกีฬากลุ่มโรงเรียนสว่างสูงกระสัง 2569",
+  "description": "ระบบบริหารจัดการแข่งขันกีฬา ลงทะเบียนนักกีฬา บันทึกผลการแข่งขัน สรุปเหรียญรางวัล และออกเกียรติบัตรพร้อมระบบตรวจสอบ QR Code",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ระบบบริหารจัดการแข่งขันกีฬากลุ่มโรงเรียนสว่างสูงกระสัง ประจำปี 2569</title>
+    <meta name="description" content="ระบบบริหารจัดการแข่งขันกีฬากลุ่มโรงเรียนสว่างสูงกระสัง ประจำปี 2569 ตารางคะแนน ผลการแข่งขัน ออกเกียรติบัตรออนไลน์" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-50 text-slate-900 font-['Prompt',sans-serif] antialiased selection:bg-amber-200 selection:text-amber-900">
+    <script>
+      // Immediate detection: If running on a standard PHP web server (Apache/Nginx/cPanel/XAMPP) without Vite
+      (function() {
+        var isDevPort = location.port === '3000' || location.port === '5173';
+        if (!isDevPort) {
+          // Verify and redirect to index.php
+          fetch('index.php', { method: 'HEAD' })
+            .then(function(res) {
+              if (res.ok || res.status === 200 || res.status === 302) {
+                var search = window.location.search || '';
+                var hash = window.location.hash || '';
+                window.location.replace('index.php' + search + hash);
+              }
+            })
+            .catch(function() {});
+        }
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
