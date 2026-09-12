@@ -174,6 +174,8 @@ export interface Certificate {
   medal: MedalType;
   issue_date: string;
   template_type: 'STUDENT' | 'COACH';
+  google_slide_template_id?: string; // Google Slide Template ID from Google Presentation
+  slide_url?: string; // Direct link or preview URL to Google Slides
   drive_file_id?: string;
   drive_url?: string;
   qr_token: string;

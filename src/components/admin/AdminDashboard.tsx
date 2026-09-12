@@ -57,6 +57,7 @@ import {
   Terminal,
   Code2,
   Play,
+  Presentation,
   LogOut,
   Radio
 } from 'lucide-react';
@@ -420,6 +421,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
     } else {
       showNotification(`ℹ️ รายการ "${eventName}" มีเกียรติบัตรครบถ้วนแล้ว (${res.skippedCount} ฉบับ)`);
     }
+  };
+
+  const handleApplyGoogleSlideTemplates = () => {
+    const updatedCount = sportsStore.applyGoogleSlideTemplatesToAllCertificates();
+    confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
+    showNotification(`🎉 นำ ID จาก Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมดสำเร็จ ${updatedCount} ฉบับ!`);
   };
 
   // --- USER MANAGEMENT HANDLERS ---
@@ -3022,6 +3029,128 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                 </div>
               </div>
             )}
+
+            {/* SECTION: แม่แบบ Google นำเสนอ (Google Slides Template Configuration) */}
+            <div className="bg-gradient-to-br from-amber-50/80 via-white to-orange-50/60 rounded-3xl p-6 border border-amber-300/80 shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-amber-200/60 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-500 text-white rounded-2xl shadow-xs shrink-0">
+                    <Presentation className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-bold font-['Kanit'] text-slate-900">
+                        แม่แบบ Google นำเสนอสำหรับสร้างเกียรติบัตร (Google Slides Templates)
+                      </h3>
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-full text-[11px] font-bold">
+                        เชื่อมโยง ID
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      ระบบจะนำ ID แม่แบบที่ตั้งค่าไว้ใน Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทุกฉบับโดยอัตโนมัติ
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleApplyGoogleSlideTemplates}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                    title="นำ ID แม่แบบที่ตั้งค่าไว้ไปผูกกับเกียรติบัตรทั้งหมดในระบบ"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> นำ ID มาสร้าง/ผูกเกียรติบัตรทั้งหมด ({certificates.length} ฉบับ)
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('SYSTEM')}
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Settings className="w-3.5 h-3.5" /> ตั้งค่าแม่แบบ ID
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Student Slide Template */}
+                <div className="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5 font-['Kanit']">
+                        🎓 แม่แบบนักเรียน (Student Template ID)
+                      </span>
+                      {comp.google_slide_template_student_id || comp.google_slide_template_id ? (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
+                      )}
+                    </div>
+                    <p className="font-mono text-xs text-slate-800 bg-slate-50 p-2 rounded-lg border border-slate-200 mt-2 truncate select-all">
+                      {comp.google_slide_template_student_id || comp.google_slide_template_id || '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)'}
+                    </p>
+                  </div>
+                  {(comp.google_slide_template_student_id || comp.google_slide_template_id) && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-slate-100 text-xs">
+                      <a
+                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_student_id || comp.google_slide_template_id}/edit`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-medium"
+                      >
+                        <ExternalLink className="w-3 h-3" /> เปิดใน Google นำเสนอ
+                      </a>
+                      <span className="text-slate-300">&bull;</span>
+                      <a
+                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_student_id || comp.google_slide_template_id}/export/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-medium"
+                      >
+                        <Download className="w-3 h-3" /> ส่งออก PDF
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {/* Coach Slide Template */}
+                <div className="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5 font-['Kanit']">
+                        👨‍🏫 แม่แบบครูผู้ฝึกสอน (Coach Template ID)
+                      </span>
+                      {comp.google_slide_template_coach_id || comp.google_slide_template_id ? (
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
+                      )}
+                    </div>
+                    <p className="font-mono text-xs text-slate-800 bg-slate-50 p-2 rounded-lg border border-slate-200 mt-2 truncate select-all">
+                      {comp.google_slide_template_coach_id || comp.google_slide_template_id || '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)'}
+                    </p>
+                  </div>
+                  {(comp.google_slide_template_coach_id || comp.google_slide_template_id) && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-slate-100 text-xs">
+                      <a
+                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_coach_id || comp.google_slide_template_id}/edit`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-medium"
+                      >
+                        <ExternalLink className="w-3 h-3" /> เปิดใน Google นำเสนอ
+                      </a>
+                      <span className="text-slate-300">&bull;</span>
+                      <a
+                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_coach_id || comp.google_slide_template_id}/export/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-medium"
+                      >
+                        <Download className="w-3 h-3" /> ส่งออก PDF
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
 
             {/* SECTION 1: รายการที่รอออกเกียรติบัตร (Pending Events) */}
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">

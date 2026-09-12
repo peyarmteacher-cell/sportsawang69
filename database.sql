@@ -218,6 +218,8 @@ CREATE TABLE `certificates` (
   `medal` ENUM('GOLD','SILVER','BRONZE','NONE') DEFAULT 'NONE',
   `issue_date` DATE NOT NULL,
   `template_type` VARCHAR(50) DEFAULT 'STANDARD_GOLD',
+  `google_slide_template_id` VARCHAR(255) DEFAULT NULL,
+  `slide_url` VARCHAR(500) DEFAULT NULL,
   `drive_file_id` VARCHAR(255) DEFAULT NULL,
   `drive_url` VARCHAR(255) DEFAULT NULL,
   `qr_token` VARCHAR(255) NOT NULL UNIQUE,

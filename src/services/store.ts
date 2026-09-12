@@ -294,8 +294,64 @@ class SportsDataStore {
 
   public getCertificates(): Certificate[] {
     const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
-    const compId = this.getCurrentCompetitionId();
-    return list.filter((c) => !c.competition_id || isMatchingCompId(c.competition_id, compId));
+    const comp = this.getCurrentCompetition();
+    const compId = comp.id;
+    const studentTpl = comp.google_slide_template_student_id || comp.google_slide_template_id || '';
+    const coachTpl = comp.google_slide_template_coach_id || comp.google_slide_template_id || '';
+
+    // Auto-enrich existing certificates with active Google Slide Template IDs if missing
+    let changed = false;
+    const enriched = list.map((c) => {
+      const targetTpl = c.recipient_type === 'COACH' ? coachTpl : studentTpl;
+      if (!c.google_slide_template_id && targetTpl) {
+        changed = true;
+        return {
+          ...c,
+          google_slide_template_id: targetTpl,
+          slide_url: `https://docs.google.com/presentation/d/${targetTpl}/edit`
+        };
+      }
+      return c;
+    });
+
+    if (changed) {
+      localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(enriched));
+    }
+
+    return enriched.filter((c) => !c.competition_id || isMatchingCompId(c.competition_id, compId));
+  }
+
+  // Apply Google Slide Template IDs configured in settings to ALL existing certificates in the system
+  public applyGoogleSlideTemplatesToAllCertificates(): { updatedCount: number; studentTpl: string; coachTpl: string } {
+    const comp = this.getCurrentCompetition();
+    const studentTpl = comp.google_slide_template_student_id || comp.google_slide_template_id || '';
+    const coachTpl = comp.google_slide_template_coach_id || comp.google_slide_template_id || '';
+
+    const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
+    let updatedCount = 0;
+
+    const updated = list.map((c) => {
+      const targetTpl = c.recipient_type === 'COACH' ? coachTpl : studentTpl;
+      if (targetTpl) {
+        updatedCount++;
+        return {
+          ...c,
+          google_slide_template_id: targetTpl,
+          slide_url: `https://docs.google.com/presentation/d/${targetTpl}/edit`
+        };
+      }
+      return c;
+    });
+
+    localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(updated));
+    this.logActivity(
+      'APPLY_GOOGLE_SLIDES',
+      'certificates',
+      comp.id,
+      `นำ ID จาก Google นำเสนอ (นักเรียน: ${studentTpl || '-'}, ครู: ${coachTpl || '-'}) มาสร้างและผูกกับเกียรติบัตรทั้งหมด ${updatedCount} ฉบับ`
+    );
+    this.notify();
+    return { updatedCount, studentTpl, coachTpl };
   }
 
   public updateCertificate(id: string, updates: Partial<Certificate>) {
@@ -1137,7 +1193,11 @@ class SportsDataStore {
 
   // Certificate Auto-Generator from Results ("One Data, Many Uses")
   public generateCertificatesForEvent(eventId: string): { createdCount: number; skippedCount: number } {
-    const compId = this.getCurrentCompetitionId();
+    const comp = this.getCurrentCompetition();
+    const compId = comp.id;
+    const studentSlideTpl = comp.google_slide_template_student_id || comp.google_slide_template_id || '';
+    const coachSlideTpl = comp.google_slide_template_coach_id || comp.google_slide_template_id || '';
+
     // Accept results that belong to this event (CONFIRMED, OFFICIAL, or any recorded result)
     const results = this.getResults().filter((r) => r.event_id === eventId);
     const existingCerts = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
@@ -1210,6 +1270,8 @@ class SportsDataStore {
               medal: res.medal,
               issue_date: new Date().toISOString().split('T')[0],
               template_type: 'STUDENT',
+              google_slide_template_id: studentSlideTpl || undefined,
+              slide_url: studentSlideTpl ? `https://docs.google.com/presentation/d/${studentSlideTpl}/edit` : undefined,
               drive_file_id: `gdrive_${certNo}_${Date.now()}`,
               drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
               qr_token: qrToken,
@@ -1256,6 +1318,8 @@ class SportsDataStore {
             medal: res.medal,
             issue_date: new Date().toISOString().split('T')[0],
             template_type: 'STUDENT',
+            google_slide_template_id: studentSlideTpl || undefined,
+            slide_url: studentSlideTpl ? `https://docs.google.com/presentation/d/${studentSlideTpl}/edit` : undefined,
             drive_file_id: `gdrive_${certNo}_${Date.now()}`,
             drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
             qr_token: qrToken,
@@ -1328,6 +1392,8 @@ class SportsDataStore {
               medal: res.medal,
               issue_date: new Date().toISOString().split('T')[0],
               template_type: 'COACH',
+              google_slide_template_id: coachSlideTpl || undefined,
+              slide_url: coachSlideTpl ? `https://docs.google.com/presentation/d/${coachSlideTpl}/edit` : undefined,
               drive_file_id: `gdrive_${certNo}_${Date.now()}`,
               drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
               qr_token: qrToken,
@@ -1374,6 +1440,8 @@ class SportsDataStore {
             medal: res.medal,
             issue_date: new Date().toISOString().split('T')[0],
             template_type: 'COACH',
+            google_slide_template_id: coachSlideTpl || undefined,
+            slide_url: coachSlideTpl ? `https://docs.google.com/presentation/d/${coachSlideTpl}/edit` : undefined,
             drive_file_id: `gdrive_${certNo}_${Date.now()}`,
             drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
             qr_token: qrToken,

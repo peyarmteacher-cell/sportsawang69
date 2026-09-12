@@ -19,6 +19,28 @@ $error = '';
 $comp = $pdo->query("SELECT * FROM competitions LIMIT 1")->fetch();
 $compId = $comp['id'] ?? 'comp-2026';
 $certPrefix = $comp['cert_prefix'] ?? 'สพป.บร.3/2569-';
+$studentSlideTpl = $comp['google_slide_template_student_id'] ?? $comp['google_slide_template_id'] ?? '';
+$coachSlideTpl = $comp['google_slide_template_coach_id'] ?? $comp['google_slide_template_id'] ?? '';
+$studentSlideUrl = !empty($studentSlideTpl) ? "https://docs.google.com/presentation/d/{$studentSlideTpl}/edit" : null;
+$coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/d/{$coachSlideTpl}/edit" : null;
+
+// -------------------------------------------------------------
+// 0. ผูกและนำ ID จาก Google นำเสนอมาอัปเดตเกียรติบัตรทั้งหมด
+// -------------------------------------------------------------
+if (isset($_POST['apply_google_slides_to_all'])) {
+    try {
+        $upSt = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'STUDENT'");
+        $upSt->execute([$studentSlideTpl, $studentSlideUrl]);
+
+        $upCo = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'COACH'");
+        $upCo->execute([$coachSlideTpl, $coachSlideUrl]);
+
+        logActivity('APPLY_GOOGLE_SLIDES', 'CERTIFICATES', "นำ ID Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมด (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl)");
+        $message = "นำ ID จาก Google นำเสนอ (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl) มาสร้างและผูกกับเกียรติบัตรทั้งหมดเรียบร้อยแล้ว!";
+    } catch (Exception $e) {
+        $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
+    }
+}
 
 // -------------------------------------------------------------
 // 1. ลบเกียรติบัตรรายฉบับ (Delete Single Certificate)
@@ -186,13 +208,13 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                             INSERT INTO certificates (
                                 id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                 school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, qr_token, status
-                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'ISSUED')
+                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, ?, ?, 'ISSUED')
                         ");
                         $ins->execute([
                             $newId, $compId, $certNo, $st['id'], $fullName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, $qrToken
+                            $resId, $award, $medal, $studentSlideTpl, $studentSlideUrl, $qrToken
                         ]);
                         $newCount++;
                     }
@@ -211,13 +233,13 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                             INSERT INTO certificates (
                                 id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                 school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, qr_token, status
-                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'ISSUED')
+                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, ?, ?, 'ISSUED')
                         ");
                         $ins->execute([
                             $newId, $compId, $certNo, $schId, $teamName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, $qrToken
+                            $resId, $award, $medal, $studentSlideTpl, $studentSlideUrl, $qrToken
                         ]);
                         $newCount++;
                     } else {
@@ -281,13 +303,13 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                                 INSERT INTO certificates (
                                     id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                     school_id, school_name, event_id, event_name, sport_name, result_id,
-                                    award, medal, issue_date, template_type, qr_token, status
-                                ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'ISSUED')
+                                    award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                                ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, ?, ?, 'ISSUED')
                             ");
                             $ins->execute([
                                 $newId, $compId, $certNo, $coach['id'], $coachName,
                                 $schId, $schName, $evId, $evName, $spName,
-                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $qrToken
+                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $coachSlideTpl, $coachSlideUrl, $qrToken
                             ]);
                             $newCount++;
                         }
@@ -307,13 +329,13 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                             INSERT INTO certificates (
                                 id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                 school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, qr_token, status
-                            ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'ISSUED')
+                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                            ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, ?, ?, 'ISSUED')
                         ");
                         $ins->execute([
                             $newId, $compId, $certNo, $schId, $coachSchoolName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $qrToken
+                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $coachSlideTpl, $coachSlideUrl, $qrToken
                         ]);
                         $newCount++;
                     } else {
