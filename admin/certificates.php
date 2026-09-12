@@ -626,8 +626,26 @@ require_once __DIR__ . '/../includes/header.php';
                     <span>📋</span> รายการเกียรติบัตรทั้งหมดในระบบ (<?= count($certs) ?> ฉบับ)
                 </h2>
                 <p class="text-xs text-slate-500 mt-0.5">
-                    สามารถค้นหา ตรวจสอบ QR Code แก้ไขข้อมูล หรือลบเกียรติบัตรรายฉบับได้
+                    คลิกปุ่ม "📥 พิมพ์ / PDF" เพื่อดาวน์โหลดหรือสั่งพิมพ์เกียรติบัตร
                 </p>
+            </div>
+        </div>
+
+        <!-- Download & Print Help Banner -->
+        <div class="p-4 bg-gradient-to-r from-amber-50 to-orange-50/60 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950">
+            <div class="flex items-start gap-3">
+                <div class="p-2 bg-amber-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5">
+                    📥
+                </div>
+                <div>
+                    <h4 class="font-bold text-sm font-kanit text-amber-950 flex items-center gap-2">
+                        💡 วิธีดาวน์โหลดเกียรติบัตรเป็นไฟล์ PDF หรือสั่งพิมพ์
+                    </h4>
+                    <p class="text-amber-900/90 mt-1 leading-relaxed">
+                        1. กดปุ่มสีส้ม <span class="bg-amber-600 text-white px-2 py-0.5 rounded font-bold text-[11px]">📥 พิมพ์ / PDF</span> ที่แถวรายชื่อของแต่ละบุคคล<br/>
+                        2. หน้าต่างเกียรติบัตรฉบับเต็มจะเปิดขึ้นมา ให้กดปุ่ม <strong>"📥 ดาวน์โหลด PDF / พิมพ์เกียรติบัตร"</strong> แล้วเลือกเครื่องพิมพ์เป็น <strong>"Save as PDF" (บันทึกเป็น PDF)</strong> หรือเลือกเครื่องพิมพ์ของท่านเพื่อสั่งพิมพ์ได้ทันที
+                    </p>
+                </div>
             </div>
         </div>
 
@@ -715,22 +733,25 @@ require_once __DIR__ . '/../includes/header.php';
                                 <td class="p-3.5 text-center text-slate-500 font-mono text-[11px]">
                                     <?= htmlspecialchars($c['issue_date']) ?>
                                 </td>
-                                <td class="p-3.5 pr-6 text-right space-x-1 whitespace-nowrap">
-                                    <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold inline-flex items-center gap-1 transition">
+                                <td class="p-3.5 pr-6 text-right space-x-1.5 whitespace-nowrap">
+                                    <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs">
+                                        📥 พิมพ์ / PDF
+                                    </a>
+                                    <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition">
                                         🔍 QR
                                     </a>
                                     <!-- ปุ่มแก้ไข -->
                                     <button 
                                         type="button"
                                         onclick='openEditModal(<?= json_encode($c) ?>)'
-                                        class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded text-xs font-semibold transition cursor-pointer"
+                                        class="px-2 py-1 bg-slate-100 hover:bg-amber-100 hover:text-amber-800 text-slate-700 rounded-lg text-xs font-medium transition cursor-pointer"
                                     >
                                         ✏️ แก้ไข
                                     </button>
                                     <!-- ปุ่มลบ -->
                                     <form method="POST" class="inline" onsubmit="return confirm('ยืนยันการลบเกียรติบัตรฉบับนี้หรือไม่?')">
                                         <input type="hidden" name="delete_cert_id" value="<?= htmlspecialchars($c['id']) ?>">
-                                        <button type="submit" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-xs font-semibold transition cursor-pointer">
+                                        <button type="submit" class="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-medium transition cursor-pointer">
                                             🗑️ ลบ
                                         </button>
                                     </form>

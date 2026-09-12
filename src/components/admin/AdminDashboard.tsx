@@ -354,6 +354,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
   const [certFilterEvent, setCertFilterEvent] = useState('');
   const [certFilterType, setCertFilterType] = useState<'ALL' | 'STUDENT' | 'COACH'>('ALL');
   const [editingCert, setEditingCert] = useState<Certificate | null>(null);
+  const [autoDownloadCert, setAutoDownloadCert] = useState(false);
+
+  const handleOpenCertView = (cert: Certificate) => {
+    setAutoDownloadCert(false);
+    setViewingCert(cert);
+  };
+
+  const handleDownloadCertPdf = (cert: Certificate) => {
+    setAutoDownloadCert(true);
+    setViewingCert(cert);
+    showNotification(`กำลังเปิดและดาวน์โหลดไฟล์ PDF เกียรติบัตรของ ${cert.recipient_name}...`);
+  };
+
   const [editCertForm, setEditCertForm] = useState({
     certificate_no: '',
     recipient_name: '',
@@ -3198,8 +3211,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                     <span>📋</span> รายการเกียรติบัตรทั้งหมดในระบบ ({filteredCerts.length} / {certificates.length} ฉบับ)
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    สามารถค้นหา ตรวจสอบ QR Code แก้ไขข้อมูล หรือลบเกียรติบัตรรายฉบับได้
+                    คลิกปุ่ม "📥 ดาวน์โหลด PDF" เพื่อบันทึกไฟล์ PDF หรือ "ดู / พิมพ์" เพื่อเปิดดูตัวอย่างเกียรติบัตร
                   </p>
+                </div>
+              </div>
+
+              {/* Download Instruction Help Box */}
+              <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50/60 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-950">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-amber-500 text-white rounded-xl shadow-xs shrink-0 mt-0.5">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm font-['Kanit'] text-amber-950 flex items-center gap-2">
+                      <span>💡</span> ปุ่มดาวน์โหลดเกียรติบัตรเป็นไฟล์ PDF อยู่ตรงไหน?
+                    </h4>
+                    <p className="text-amber-900/90 mt-1 leading-relaxed">
+                      1. <strong>ดาวน์โหลด PDF ทันที:</strong> กดปุ่มสีส้ม <span className="inline-flex items-center gap-1 bg-amber-600 text-white px-2 py-0.5 rounded-md font-bold text-[11px] shadow-2xs"><Download className="w-3 h-3" /> ดาวน์โหลด PDF</span> ที่คอลัมน์ด้านขวาสุดของแต่ละรายชื่อ ระบบจะเปิดหน้าต่างเกียรติบัตรและสร้างไฟล์ PDF ดาวน์โหลดลงเครื่องทันที<br/>
+                      2. <strong>ดูตัวอย่าง / พิมพ์:</strong> กดปุ่มสีน้ำเงิน <span className="inline-flex items-center gap-1 bg-blue-100 text-blue-800 px-2 py-0.5 rounded-md font-bold text-[11px]"><Printer className="w-3 h-3" /> ดู / พิมพ์</span> โดยที่แถบด้านบนของหน้าต่างตัวอย่างจะมีปุ่ม <strong>"ดาวน์โหลด PDF"</strong> สีส้ม และปุ่ม <strong>"พิมพ์เกียรติบัตร"</strong> สีน้ำเงิน ให้กดได้เช่นกัน
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -3310,24 +3341,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                           <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">
                             {cert.issue_date}
                           </td>
-                          <td className="py-3 px-3 pr-4 text-right space-x-1 whitespace-nowrap">
+                          <td className="py-3 px-3 pr-4 text-right space-x-1.5 whitespace-nowrap">
                             <button
-                              onClick={() => setViewingCert(cert)}
-                              className="px-2 py-1 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
-                              title="เปิดเกียรติบัตร / พิมพ์"
+                              onClick={() => handleDownloadCertPdf(cert)}
+                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-bold rounded-xl transition-all inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+                              title="ดาวน์โหลดเกียรติบัตรเป็นไฟล์ PDF ทันที"
                             >
-                              <Printer className="w-3 h-3" /> เปิด
+                              <Download className="w-3.5 h-3.5" /> ดาวน์โหลด PDF
+                            </button>
+                            <button
+                              onClick={() => handleOpenCertView(cert)}
+                              className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                              title="เปิดดูตัวอย่างเกียรติบัตร / สั่งพิมพ์"
+                            >
+                              <Printer className="w-3.5 h-3.5" /> ดู / พิมพ์
                             </button>
                             <button
                               onClick={() => handleOpenEditCert(cert)}
-                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              className="px-2 py-1.5 bg-slate-100 hover:bg-amber-100 hover:text-amber-800 text-slate-700 text-xs font-medium rounded-xl transition-colors inline-flex items-center gap-1 cursor-pointer"
                               title="แก้ไขข้อมูลเกียรติบัตร"
                             >
                               <Edit2 className="w-3 h-3" /> แก้ไข
                             </button>
                             <button
                               onClick={() => handleDeleteCert(cert)}
-                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              className="px-2 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
                               title="ลบเกียรติบัตร"
                             >
                               <Trash2 className="w-3 h-3" /> ลบ
@@ -4291,7 +4329,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
       {viewingCert && (
         <CertificateModal
           certificate={viewingCert}
-          onClose={() => setViewingCert(null)}
+          autoDownload={autoDownloadCert}
+          onClose={() => {
+            setViewingCert(null);
+            setAutoDownloadCert(false);
+          }}
         />
       )}
     </div>

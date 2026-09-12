@@ -10,14 +10,20 @@ import html2canvas from 'html2canvas';
 interface CertificateModalProps {
   certificate: Certificate | null;
   onClose: () => void;
+  autoDownload?: boolean;
 }
 
-export const CertificateModal: React.FC<CertificateModalProps> = ({ certificate, onClose }) => {
+export const CertificateModal: React.FC<CertificateModalProps> = ({ certificate, onClose, autoDownload = false }) => {
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
   const certRef = useRef<HTMLDivElement>(null);
+  const hasAutoDownloadedRef = useRef(false);
+
+  useEffect(() => {
+    hasAutoDownloadedRef.current = false;
+  }, [certificate?.id]);
 
   useEffect(() => {
     if (certificate) {
@@ -30,10 +36,18 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({ certificate,
           light: '#ffffff'
         }
       })
-        .then((url) => setQrDataUrl(url))
+        .then((url) => {
+          setQrDataUrl(url);
+          if (autoDownload && !hasAutoDownloadedRef.current) {
+            hasAutoDownloadedRef.current = true;
+            setTimeout(() => {
+              handleDownloadPdf();
+            }, 500);
+          }
+        })
         .catch(console.error);
     }
-  }, [certificate]);
+  }, [certificate, autoDownload]);
 
   if (!certificate) return null;
 

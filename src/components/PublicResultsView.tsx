@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { sportsStore } from '../services/store';
 import { Result, Event, Sport, School, Certificate } from '../types';
 import { CertificateModal } from './CertificateModal';
-import { Search, Trophy, Filter, Eye, Award, CheckCircle2, FileText, Users } from 'lucide-react';
+import { Search, Trophy, Filter, Eye, Award, CheckCircle2, FileText, Users, Download } from 'lucide-react';
 
 export const PublicResultsView: React.FC<{ initialSchoolId?: string }> = ({ initialSchoolId }) => {
   const sports = sportsStore.getSports();
@@ -208,9 +208,9 @@ export const PublicResultsView: React.FC<{ initialSchoolId?: string }> = ({ init
                       {certs.length > 0 ? (
                         <button
                           onClick={() => setViewingCert(certs[0])}
-                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-bold rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs border border-indigo-100"
+                          className="px-3 py-1.5 bg-amber-50 hover:bg-amber-600 hover:text-white text-amber-900 text-xs font-bold rounded-xl transition-colors inline-flex items-center gap-1.5 shadow-2xs border border-amber-200 cursor-pointer"
                         >
-                          <FileText className="w-3.5 h-3.5" /> ดูเกียรติบัตร ({certs.length})
+                          <Download className="w-3.5 h-3.5" /> ดู / ดาวน์โหลด PDF ({certs.length})
                         </button>
                       ) : (
                         <span className="text-xs text-slate-400">ยังไม่ออกบัตร</span>
