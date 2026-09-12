@@ -15,6 +15,42 @@ $pdo = Database::getConnection();
 $message = '';
 $error = '';
 
+// Auto-migrate / Self-healing schema: ตรวจสอบและเพิ่มคอลัมน์ใหม่อัตโนมัติหากยังไม่มีในตาราง competitions
+$compColsToEnsure = [
+    'academic_year' => "VARCHAR(50) DEFAULT '2569'",
+    'header_bg_image' => "TEXT DEFAULT NULL",
+    'google_drive_folder_id' => "VARCHAR(255) DEFAULT NULL",
+    'google_slide_template_id' => "VARCHAR(255) DEFAULT NULL",
+    'google_slide_template_student_id' => "VARCHAR(255) DEFAULT NULL COMMENT 'แม่แบบสไลด์สำหรับนักเรียน'",
+    'google_slide_template_coach_id' => "VARCHAR(255) DEFAULT NULL COMMENT 'แม่แบบสไลด์สำหรับครูผู้ฝึกสอน'",
+    'google_apps_script_url' => "TEXT DEFAULT NULL",
+    'president_name' => "VARCHAR(150) DEFAULT NULL",
+    'director_name' => "VARCHAR(150) DEFAULT NULL",
+    'cert_prefix' => "VARCHAR(50) DEFAULT 'สพป.บร.3/2569-'",
+    'medal_criteria' => "ENUM('GOLD_FIRST', 'TOTAL_FIRST') DEFAULT 'GOLD_FIRST'"
+];
+
+$existingCols = [];
+try {
+    $colStmt = $pdo->query("SHOW COLUMNS FROM `competitions`");
+    if ($colStmt) {
+        while ($colRow = $colStmt->fetch(PDO::FETCH_ASSOC)) {
+            $existingCols[] = strtolower($colRow['Field']);
+        }
+    }
+} catch (Exception $e) {}
+
+foreach ($compColsToEnsure as $colName => $colDef) {
+    if (!in_array(strtolower($colName), $existingCols)) {
+        try {
+            $pdo->exec("ALTER TABLE `competitions` ADD `$colName` $colDef");
+            $existingCols[] = strtolower($colName);
+        } catch (Exception $e) {
+            // ดำเนินการต่อแม้ ALTER จะมีข้อจำกัดด้านสิทธิ์
+        }
+    }
+}
+
 // ดึงข้อมูลการแข่งขันปัจจุบัน
 $comp = $pdo->query("SELECT * FROM competitions LIMIT 1")->fetch();
 if (!$comp) {
@@ -49,33 +85,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_save_settings'
     $medalCriteria = trim($_POST['medal_criteria'] ?? 'GOLD_FIRST');
 
     try {
-        $stmt = $pdo->prepare("
-            UPDATE competitions SET
-                competition_name = ?,
-                academic_year = ?,
-                start_date = ?,
-                end_date = ?,
-                venue = ?,
-                host_org = ?,
-                president_name = ?,
-                director_name = ?,
-                cert_prefix = ?,
-                google_apps_script_url = ?,
-                google_drive_folder_id = ?,
-                google_slide_template_id = ?,
-                google_slide_template_student_id = ?,
-                google_slide_template_coach_id = ?,
-                medal_criteria = ?
-            WHERE id = ?
-        ");
-        $stmt->execute([
-            $compName, $acadYear, $startDate, $endDate, $venue, $hostOrg,
-            $presidentName, $directorName, $certPrefix,
-            $gasUrl, $driveFolderId, $slideTemplateId,
-            $studentTemplateId, $coachTemplateId,
-            $medalCriteria,
-            $comp['id']
-        ]);
+        // ตรวจสอบคอลัมน์อีกครั้งก่อนสร้างคำสั่ง UPDATE เพื่อความปลอดภัยสูงสุด 100%
+        $activeCols = [];
+        try {
+            $cStmt = $pdo->query("SHOW COLUMNS FROM `competitions`");
+            if ($cStmt) {
+                while ($r = $cStmt->fetch(PDO::FETCH_ASSOC)) {
+                    $activeCols[] = strtolower($r['Field']);
+                }
+            }
+        } catch (Exception $e) {}
+
+        // พยายามเพิ่มคอลัมน์หากยังไม่มี
+        foreach ($compColsToEnsure as $cName => $cDef) {
+            if (!in_array(strtolower($cName), $activeCols)) {
+                try {
+                    $pdo->exec("ALTER TABLE `competitions` ADD `$cName` $cDef");
+                    $activeCols[] = strtolower($cName);
+                } catch (Exception $e) {}
+            }
+        }
+
+        // จัดเตรียมชุดข้อมูลที่จะทำการ UPDATE เฉพาะคอลัมน์ที่มีอยู่จริง
+        $fieldMap = [
+            'competition_name' => $compName,
+            'academic_year' => $acadYear,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'venue' => $venue,
+            'host_org' => $hostOrg,
+            'president_name' => $presidentName,
+            'director_name' => $directorName,
+            'cert_prefix' => $certPrefix,
+            'google_apps_script_url' => $gasUrl,
+            'google_drive_folder_id' => $driveFolderId,
+            'google_slide_template_id' => $slideTemplateId,
+            'google_slide_template_student_id' => $studentTemplateId,
+            'google_slide_template_coach_id' => $coachTemplateId,
+            'medal_criteria' => $medalCriteria
+        ];
+
+        $updateClauses = [];
+        $params = [];
+        foreach ($fieldMap as $fName => $val) {
+            if (in_array(strtolower($fName), $activeCols)) {
+                $updateClauses[] = "`$fName` = ?";
+                $params[] = $val;
+            }
+        }
+
+        if (!empty($updateClauses)) {
+            $params[] = $comp['id'];
+            $sql = "UPDATE `competitions` SET " . implode(', ', $updateClauses) . " WHERE `id` = ?";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        }
 
         logActivity('UPDATE_SETTINGS', 'SYSTEM', "บันทึกการตั้งค่าระบบและการเชื่อมต่อ Google Slides แยกนักเรียนและครู");
         $message = "บันทึกการตั้งค่าระบบและการตั้งค่าแม่แบบเกียรติบัตรนักเรียน/ครู เรียบร้อยแล้ว!";

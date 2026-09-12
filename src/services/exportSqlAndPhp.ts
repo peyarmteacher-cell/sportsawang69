@@ -1528,6 +1528,8 @@ ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`academic_year\` VARCHAR(
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`header_bg_image\` TEXT DEFAULT NULL;
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_drive_folder_id\` VARCHAR(255) DEFAULT NULL;
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_id\` VARCHAR(255) DEFAULT NULL;
+ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_student_id\` VARCHAR(255) DEFAULT NULL COMMENT 'แม่แบบสไลด์สำหรับนักเรียน';
+ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_coach_id\` VARCHAR(255) DEFAULT NULL COMMENT 'แม่แบบสไลด์สำหรับครูผู้ฝึกสอน';
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`president_name\` VARCHAR(150) DEFAULT NULL;
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`director_name\` VARCHAR(150) DEFAULT NULL;
 ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`cert_prefix\` VARCHAR(50) DEFAULT 'สพป.บร.3/2569-';
@@ -1609,6 +1611,8 @@ try {
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`header_bg_image\` TEXT DEFAULT NULL",
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_drive_folder_id\` VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_id\` VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_student_id\` VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`google_slide_template_coach_id\` VARCHAR(255) DEFAULT NULL",
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`president_name\` VARCHAR(150) DEFAULT NULL",
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`director_name\` VARCHAR(150) DEFAULT NULL",
         "ALTER TABLE \`competitions\` ADD COLUMN IF NOT EXISTS \`cert_prefix\` VARCHAR(50) DEFAULT 'สพป.บร.3/2569-'",

@@ -3,6 +3,9 @@
  * ==============================================================================
  * ไฟล์: admin/certificates.php
  * คำอธิบาย: ระบบจัดการและออกเกียรติบัตร (Certificates Management & E-Certificate)
+ *            - รายการที่รอออกเกียรติบัตร (Pending Events)
+ *            - รายการที่ออกเกียรติบัตรแล้ว (Issued Events)
+ *            - ตรวจสอบ แก้ไข และลบเกียรติบัตรรายฉบับ / รายรายการ
  * ==============================================================================
  */
 require_once __DIR__ . '/../config/database.php';
@@ -14,133 +17,363 @@ $message = '';
 $error = '';
 
 $comp = $pdo->query("SELECT * FROM competitions LIMIT 1")->fetch();
+$compId = $comp['id'] ?? 'comp-2026';
+$certPrefix = $comp['cert_prefix'] ?? 'สพป.บร.3/2569-';
 
 // -------------------------------------------------------------
-// สั่งออกเกียรติบัตรจากผลการแข่งขันที่ยืนยันแล้ว
+// 1. ลบเกียรติบัตรรายฉบับ (Delete Single Certificate)
 // -------------------------------------------------------------
-if (isset($_POST['generate_from_results'])) {
+if (isset($_POST['delete_cert_id']) || (isset($_GET['action']) && $_GET['action'] === 'delete' && !empty($_GET['cert_id']))) {
+    $delId = $_POST['delete_cert_id'] ?? $_GET['cert_id'];
     try {
-        $results = $pdo->query("
+        $stmt = $pdo->prepare("SELECT certificate_no, recipient_name FROM certificates WHERE id = ?");
+        $stmt->execute([$delId]);
+        $targetCert = $stmt->fetch();
+
+        $delStmt = $pdo->prepare("DELETE FROM certificates WHERE id = ?");
+        $delStmt->execute([$delId]);
+        logActivity('DELETE_CERTIFICATE', 'CERTIFICATES', "ลบเกียรติบัตร: " . ($targetCert['recipient_name'] ?? $delId) . " (" . ($targetCert['certificate_no'] ?? '') . ")");
+        $message = "ลบเกียรติบัตรเลขที่ " . htmlspecialchars($targetCert['certificate_no'] ?? '') . " เรียบร้อยแล้ว!";
+    } catch (Exception $e) {
+        $error = "เกิดข้อผิดพลาดในการลบเกียรติบัตร: " . $e->getMessage();
+    }
+}
+
+// -------------------------------------------------------------
+// 2. ลบเกียรติบัตรทั้งหมดของรายการแข่งขัน (Delete Event Certificates)
+// -------------------------------------------------------------
+if (isset($_POST['delete_event_certs']) || (isset($_GET['action']) && $_GET['action'] === 'delete_event' && !empty($_GET['event_id']))) {
+    $delEventId = $_POST['event_id'] ?? $_GET['event_id'];
+    try {
+        $evStmt = $pdo->prepare("SELECT event_name FROM events WHERE id = ?");
+        $evStmt->execute([$delEventId]);
+        $evName = $evStmt->fetchColumn() ?: $delEventId;
+
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM certificates WHERE event_id = ?");
+        $countStmt->execute([$delEventId]);
+        $cCount = $countStmt->fetchColumn();
+
+        $pdo->prepare("DELETE FROM certificates WHERE event_id = ?")->execute([$delEventId]);
+        logActivity('DELETE_EVENT_CERTS', 'CERTIFICATES', "ลบเกียรติบัตรทั้งหมดของรายการ: $evName จำนวน $cCount ฉบับ");
+        $message = "ลบเกียรติบัตรของรายการ \"$evName\" จำนวน $cCount ฉบับเรียบร้อยแล้ว ท่านสามารถกดออกใหม่ได้ทันที";
+    } catch (Exception $e) {
+        $error = "เกิดข้อผิดพลาดในการลบเกียรติบัตรของรายการ: " . $e->getMessage();
+    }
+}
+
+// -------------------------------------------------------------
+// 3. แก้ไขข้อมูลเกียรติบัตร (Edit Certificate)
+// -------------------------------------------------------------
+if (isset($_POST['save_edit_cert'])) {
+    $editId = trim($_POST['cert_id'] ?? '');
+    $editNo = trim($_POST['certificate_no'] ?? '');
+    $editName = trim($_POST['recipient_name'] ?? '');
+    $editSchool = trim($_POST['school_name'] ?? '');
+    $editAward = trim($_POST['award'] ?? '');
+    $editMedal = trim($_POST['medal'] ?? 'GOLD');
+    $editIssueDate = trim($_POST['issue_date'] ?? date('Y-m-d'));
+    $editType = trim($_POST['recipient_type'] ?? 'STUDENT');
+
+    if ($editId && $editName && $editNo) {
+        try {
+            $stmt = $pdo->prepare("
+                UPDATE certificates 
+                SET certificate_no = ?, recipient_name = ?, school_name = ?, 
+                    award = ?, medal = ?, issue_date = ?, recipient_type = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$editNo, $editName, $editSchool, $editAward, $editMedal, $editIssueDate, $editType, $editId]);
+            logActivity('EDIT_CERTIFICATE', 'CERTIFICATES', "แก้ไขเกียรติบัตร: $editName ($editNo)");
+            $message = "แก้ไขข้อมูลเกียรติบัตรเลขที่ \"$editNo\" เรียบร้อยแล้ว!";
+        } catch (Exception $e) {
+            $error = "เกิดข้อผิดพลาดในการแก้ไขเกียรติบัตร: " . $e->getMessage();
+        }
+    } else {
+        $error = "กรุณากรอกข้อมูลเลขที่เกียรติบัตรและชื่อผู้ได้รับให้ครบถ้วน";
+    }
+}
+
+// -------------------------------------------------------------
+// 4. ออกเกียรติบัตรจากผลการแข่งขัน (Generate Certificates - Batch or Per Event)
+// -------------------------------------------------------------
+if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_event'])) {
+    $targetEventId = isset($_POST['generate_single_event']) ? trim($_POST['event_id'] ?? '') : null;
+
+    try {
+        // Query results (accept both OFFICIAL, CONFIRMED, or any recorded result)
+        $whereSql = "WHERE 1=1";
+        $queryParams = [];
+        if ($targetEventId) {
+            $whereSql .= " AND r.event_id = ?";
+            $queryParams[] = $targetEventId;
+        }
+
+        $query = "
             SELECT r.*, e.event_name, sp.sport_name, sch.school_name, sch.school_code
             FROM results r
             JOIN events e ON r.event_id = e.id
             JOIN sports sp ON e.sport_id = sp.id
             JOIN schools sch ON r.school_id = sch.id
-            WHERE r.status = 'CONFIRMED'
-        ")->fetchAll();
+            $whereSql
+            ORDER BY e.event_code ASC, r.rank ASC
+        ";
 
-        $certPrefix = $comp['cert_prefix'] ?? 'สพป.บร.3/2569-';
-        $currentCount = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
-        $newCount = 0;
+        $stmt = $pdo->prepare($query);
+        $stmt->execute($queryParams);
+        $results = $stmt->fetchAll();
 
-        foreach ($results as $res) {
-            // ค้นหานักเรียนในทีมที่ลงทะเบียน
-            $reg = $pdo->prepare("SELECT id, coach_id, secondary_coach_id FROM registrations WHERE event_id = ? AND school_id = ?");
-            $reg->execute([$res['event_id'], $res['school_id']]);
-            $registration = $reg->fetch();
+        if (empty($results)) {
+            $error = "ไม่พบรายการผลการแข่งขันที่บันทึกไว้ในระบบ กรุณาบันทึกผลการแข่งขันในเมนู \"ประกาศผลการแข่งขัน\" ก่อน";
+        } else {
+            $currentCount = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+            $newCount = 0;
+            $skippedCount = 0;
 
-            if ($registration) {
-                // 1. ออกเกียรติบัตรให้นักเรียนทุกคนในทีม
-                $students = $pdo->prepare("
-                    SELECT s.* FROM students s
-                    JOIN registration_students rs ON s.id = rs.student_id
-                    WHERE rs.registration_id = ?
-                ");
-                $students->execute([$registration['id']]);
-                $studentList = $students->fetchAll();
+            foreach ($results as $res) {
+                $evId = $res['event_id'];
+                $schId = $res['school_id'];
+                $schName = $res['school_name'];
+                $evName = $res['event_name'];
+                $spName = $res['sport_name'];
+                $resId = $res['id'];
+                $award = $res['award'];
+                $medal = $res['medal'];
 
-                foreach ($studentList as $st) {
-                    $fullName = $st['prefix'] . $st['first_name'] . ' ' . $st['last_name'];
-                    
-                    // เช็คว่าเคยออกหรือยัง
-                    $chk = $pdo->prepare("SELECT id FROM certificates WHERE result_id = ? AND recipient_id = ?");
-                    $chk->execute([$res['id'], $st['id']]);
-                    if (!$chk->fetch()) {
+                // ค้นหาข้อมูลการลงทะเบียนของโรงเรียนในรายการนี้
+                $regStmt = $pdo->prepare("SELECT id, coach_id, secondary_coach_id, coach_ids FROM registrations WHERE event_id = ? AND school_id = ?");
+                $regStmt->execute([$evId, $schId]);
+                $reg = $regStmt->fetch();
+
+                // --------------------------------------------------
+                // 1. ดึงรายชื่อนักเรียน
+                // --------------------------------------------------
+                $studentList = [];
+                if ($reg) {
+                    $stStmt = $pdo->prepare("
+                        SELECT s.* FROM students s
+                        JOIN registration_students rs ON s.id = rs.student_id
+                        WHERE rs.registration_id = ?
+                    ");
+                    $stStmt->execute([$reg['id']]);
+                    $studentList = $stStmt->fetchAll();
+                }
+
+                // Fallback A: หากไม่ได้ระบุนักเรียนในใบสมัคร ให้ดึงนักเรียนของโรงเรียนนี้
+                if (empty($studentList)) {
+                    $fallbackSt = $pdo->prepare("SELECT * FROM students WHERE school_id = ? LIMIT 5");
+                    $fallbackSt->execute([$schId]);
+                    $studentList = $fallbackSt->fetchAll();
+                }
+
+                if (!empty($studentList)) {
+                    foreach ($studentList as $st) {
+                        $fullName = trim(($st['prefix'] ?? '') . $st['first_name'] . ' ' . $st['last_name']);
+                        
+                        // ตรวจสอบว่าเคยออกเกียรติบัตรให้นักเรียนคนนี้ในผลนี้แล้วหรือยัง
+                        $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'STUDENT'");
+                        $chk->execute([$evId, $st['id']]);
+                        if ($chk->fetch()) {
+                            $skippedCount++;
+                            continue;
+                        }
+
                         $currentCount++;
                         $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
                         $qrToken = bin2hex(random_bytes(16));
                         $newId = 'cert-' . uniqid();
 
-                        $stmt = $pdo->prepare("
+                        $ins = $pdo->prepare("
                             INSERT INTO certificates (
                                 id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                 school_id, school_name, event_id, event_name, sport_name, result_id,
                                 award, medal, issue_date, template_type, qr_token, status
                             ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'ISSUED')
                         ");
-                        $stmt->execute([
-                            $newId, $comp['id'] ?? 'comp-2026', $certNo, $st['id'], $fullName,
-                            $res['school_id'], $res['school_name'], $res['event_id'], $res['event_name'], $res['sport_name'],
-                            $res['id'], $res['award'], $res['medal'], $qrToken
+                        $ins->execute([
+                            $newId, $compId, $certNo, $st['id'], $fullName,
+                            $schId, $schName, $evId, $evName, $spName,
+                            $resId, $award, $medal, $qrToken
                         ]);
                         $newCount++;
                     }
-                }
+                } else {
+                    // Fallback B: กรณีไม่มีรายชื่อนักเรียนรายบุคคลเลย ออกเกียรติบัตรให้ทีมโรงเรียน
+                    $chkTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'STUDENT'");
+                    $chkTeam->execute([$evId, $schId]);
+                    if (!$chkTeam->fetch()) {
+                        $currentCount++;
+                        $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                        $qrToken = bin2hex(random_bytes(16));
+                        $newId = 'cert-' . uniqid();
+                        $teamName = 'ตัวแทนนักกีฬาโรงเรียน' . $schName;
 
-                // 2. ออกเกียรติบัตรให้ครูผู้ฝึกสอน (ทุกท่านที่ลงทะเบียนในรายการนี้)
-                $targetCoachIds = [];
-                // จาก registration_coaches
-                try {
-                    $rcStmt = $pdo->prepare("SELECT coach_id FROM registration_coaches WHERE registration_id = ?");
-                    $rcStmt->execute([$registration['id']]);
-                    $targetCoachIds = $rcStmt->fetchAll(PDO::FETCH_COLUMN);
-                } catch (Exception $e) {
-                    $targetCoachIds = [];
-                }
-                // จาก coach_ids JSON, coach_id, secondary_coach_id
-                if (!empty($registration['coach_ids'])) {
-                    $cDecoded = json_decode($registration['coach_ids'], true);
-                    if (is_array($cDecoded)) {
-                        $targetCoachIds = array_merge($targetCoachIds, $cDecoded);
+                        $ins = $pdo->prepare("
+                            INSERT INTO certificates (
+                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                school_id, school_name, event_id, event_name, sport_name, result_id,
+                                award, medal, issue_date, template_type, qr_token, status
+                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'ISSUED')
+                        ");
+                        $ins->execute([
+                            $newId, $compId, $certNo, $schId, $teamName,
+                            $schId, $schName, $evId, $evName, $spName,
+                            $resId, $award, $medal, $qrToken
+                        ]);
+                        $newCount++;
+                    } else {
+                        $skippedCount++;
                     }
                 }
-                if (!empty($registration['coach_id'])) $targetCoachIds[] = $registration['coach_id'];
-                if (!empty($registration['secondary_coach_id'])) $targetCoachIds[] = $registration['secondary_coach_id'];
+
+                // --------------------------------------------------
+                // 2. ดึงรายชื่อครูผู้ฝึกสอน
+                // --------------------------------------------------
+                $targetCoachIds = [];
+                if ($reg) {
+                    try {
+                        $rcStmt = $pdo->prepare("SELECT coach_id FROM registration_coaches WHERE registration_id = ?");
+                        $rcStmt->execute([$reg['id']]);
+                        $targetCoachIds = $rcStmt->fetchAll(PDO::FETCH_COLUMN);
+                    } catch (Exception $e) {
+                        $targetCoachIds = [];
+                    }
+
+                    if (!empty($reg['coach_ids'])) {
+                        $cDecoded = json_decode($reg['coach_ids'], true);
+                        if (is_array($cDecoded)) {
+                            $targetCoachIds = array_merge($targetCoachIds, $cDecoded);
+                        }
+                    }
+                    if (!empty($reg['coach_id'])) $targetCoachIds[] = $reg['coach_id'];
+                    if (!empty($reg['secondary_coach_id'])) $targetCoachIds[] = $reg['secondary_coach_id'];
+                }
+
                 $targetCoachIds = array_unique(array_filter($targetCoachIds));
 
-                foreach ($targetCoachIds as $cId) {
-                    $cStmt = $pdo->prepare("SELECT * FROM coaches WHERE id = ?");
-                    $cStmt->execute([$cId]);
-                    $coach = $cStmt->fetch();
-                    if ($coach) {
-                        $coachName = $coach['prefix'] . $coach['first_name'] . ' ' . $coach['last_name'];
-                        $chk = $pdo->prepare("SELECT id FROM certificates WHERE result_id = ? AND recipient_id = ?");
-                        $chk->execute([$res['id'], $coach['id']]);
-                        if (!$chk->fetch()) {
+                // Fallback A: หาโค้ชที่สังกัดโรงเรียนนี้
+                if (empty($targetCoachIds)) {
+                    $cSchStmt = $pdo->prepare("SELECT id FROM coaches WHERE school_id = ? LIMIT 2");
+                    $cSchStmt->execute([$schId]);
+                    $targetCoachIds = $cSchStmt->fetchAll(PDO::FETCH_COLUMN);
+                }
+
+                if (!empty($targetCoachIds)) {
+                    foreach ($targetCoachIds as $cId) {
+                        $cStmt = $pdo->prepare("SELECT * FROM coaches WHERE id = ?");
+                        $cStmt->execute([$cId]);
+                        $coach = $cStmt->fetch();
+                        if ($coach) {
+                            $coachName = trim(($coach['prefix'] ?? '') . $coach['first_name'] . ' ' . $coach['last_name']);
+                            
+                            $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'COACH'");
+                            $chk->execute([$evId, $coach['id']]);
+                            if ($chk->fetch()) {
+                                $skippedCount++;
+                                continue;
+                            }
+
                             $currentCount++;
                             $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
                             $qrToken = bin2hex(random_bytes(16));
                             $newId = 'cert-' . uniqid();
 
-                            $stmt = $pdo->prepare("
+                            $ins = $pdo->prepare("
                                 INSERT INTO certificates (
                                     id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
                                     school_id, school_name, event_id, event_name, sport_name, result_id,
                                     award, medal, issue_date, template_type, qr_token, status
                                 ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'ISSUED')
                             ");
-                            $stmt->execute([
-                                $newId, $comp['id'] ?? 'comp-2026', $certNo, $coach['id'], $coachName,
-                                $res['school_id'], $res['school_name'], $res['event_id'], $res['event_name'], $res['sport_name'],
-                                $res['id'], 'ครูผู้ฝึกสอน - ' . $res['award'], $res['medal'], $qrToken
+                            $ins->execute([
+                                $newId, $compId, $certNo, $coach['id'], $coachName,
+                                $schId, $schName, $evId, $evName, $spName,
+                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $qrToken
                             ]);
                             $newCount++;
                         }
                     }
+                } else {
+                    // Fallback B: ออกเกียรติบัตรครูผู้ฝึกสอนประจำโรงเรียน
+                    $chkCoachTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'COACH'");
+                    $chkCoachTeam->execute([$evId, $schId]);
+                    if (!$chkCoachTeam->fetch()) {
+                        $currentCount++;
+                        $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                        $qrToken = bin2hex(random_bytes(16));
+                        $newId = 'cert-' . uniqid();
+                        $coachSchoolName = 'ครูผู้ฝึกสอนโรงเรียน' . $schName;
+
+                        $ins = $pdo->prepare("
+                            INSERT INTO certificates (
+                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                school_id, school_name, event_id, event_name, sport_name, result_id,
+                                award, medal, issue_date, template_type, qr_token, status
+                            ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'ISSUED')
+                        ");
+                        $ins->execute([
+                            $newId, $compId, $certNo, $schId, $coachSchoolName,
+                            $schId, $schName, $evId, $evName, $spName,
+                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $qrToken
+                        ]);
+                        $newCount++;
+                    } else {
+                        $skippedCount++;
+                    }
                 }
             }
-        }
 
-        logActivity('GENERATE_CERTS', 'CERTIFICATE', "ประมวลผลออกเกียรติบัตรอัตโนมัติ $newCount ฉบับ");
-        $message = "ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ!";
+            logActivity('GENERATE_CERTS', 'CERTIFICATES', "ประมวลผลออกเกียรติบัตร: สร้างใหม่ $newCount ฉบับ (เคยมีแล้ว $skippedCount ฉบับ)");
+            if ($newCount > 0) {
+                $message = "🎉 ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ! (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
+            } else {
+                $message = "ℹ️ รายการนี้ได้เคยออกเกียรติบัตรไปครบถ้วนแล้วทั้งหมด ($skippedCount ฉบับ) ไม่มีรายการตกค้าง!";
+            }
+        }
     } catch (Exception $e) {
-        $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
+        $error = "เกิดข้อผิดพลาดในการสร้างเกียรติบัตร: " . $e->getMessage();
     }
 }
 
-// ค้นหาเกียรติบัตร
+// -------------------------------------------------------------
+// 5. ดึงข้อมูลภาพรวม: รายการที่รอออกเกียรติบัตร vs รายการที่ออกเกียรติบัตรแล้ว
+// -------------------------------------------------------------
+$allEventsWithResults = $pdo->query("
+    SELECT e.id as event_id, e.event_name, e.event_code, e.age_group, sp.sport_name, sp.sport_icon,
+           COUNT(DISTINCT r.id) as result_count,
+           COUNT(DISTINCT c.id) as cert_count,
+           SUM(CASE WHEN c.recipient_type = 'STUDENT' THEN 1 ELSE 0 END) as student_cert_count,
+           SUM(CASE WHEN c.recipient_type = 'COACH' THEN 1 ELSE 0 END) as coach_cert_count,
+           MAX(c.created_at) as last_cert_at,
+           MAX(CASE WHEN r.medal = 'GOLD' THEN sch.school_name END) as gold_school,
+           MAX(CASE WHEN r.medal = 'SILVER' THEN sch.school_name END) as silver_school,
+           MAX(CASE WHEN r.medal = 'BRONZE' THEN sch.school_name END) as bronze_school
+    FROM events e
+    JOIN sports sp ON e.sport_id = sp.id
+    JOIN results r ON e.id = r.event_id
+    JOIN schools sch ON r.school_id = sch.id
+    LEFT JOIN certificates c ON e.id = c.event_id
+    GROUP BY e.id, e.event_name, e.event_code, e.age_group, sp.sport_name, sp.sport_icon
+    ORDER BY e.event_code ASC, e.event_name ASC
+")->fetchAll();
+
+$pendingEvents = [];
+$completedEvents = [];
+
+foreach ($allEventsWithResults as $ev) {
+    if ($ev['cert_count'] == 0) {
+        $pendingEvents[] = $ev;
+    } else {
+        $completedEvents[] = $ev;
+    }
+}
+
+// -------------------------------------------------------------
+// 6. ตัวกรองและค้นหาเกียรติบัตรทั้งหมด
+// -------------------------------------------------------------
 $search = trim($_GET['search'] ?? '');
 $filterSchool = trim($_GET['school_id'] ?? '');
+$filterEvent = trim($_GET['event_id'] ?? '');
+$filterType = trim($_GET['recipient_type'] ?? '');
 
 $sql = "SELECT * FROM certificates WHERE 1=1";
 $params = [];
@@ -154,7 +387,15 @@ if ($filterSchool) {
     $sql .= " AND school_id = ?";
     $params[] = $filterSchool;
 }
-$sql .= " ORDER BY created_at DESC LIMIT 100";
+if ($filterEvent) {
+    $sql .= " AND event_id = ?";
+    $params[] = $filterEvent;
+}
+if ($filterType) {
+    $sql .= " AND recipient_type = ?";
+    $params[] = $filterType;
+}
+$sql .= " ORDER BY created_at DESC, certificate_no DESC LIMIT 200";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -162,75 +403,267 @@ $certs = $stmt->fetchAll();
 
 $schools = $pdo->query("SELECT id, school_name FROM schools ORDER BY school_name ASC")->fetchAll();
 $totalCerts = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+$studentCertsCount = $pdo->query("SELECT COUNT(*) FROM certificates WHERE recipient_type = 'STUDENT'")->fetchColumn();
+$coachCertsCount = $pdo->query("SELECT COUNT(*) FROM certificates WHERE recipient_type = 'COACH'")->fetchColumn();
 
-$pageTitle = 'จัดการและออกเกียรติบัตร - Admin Console';
+$pageTitle = 'ระบบจัดการและออกเกียรติบัตร (E-Certificate) - Admin Console';
 require_once __DIR__ . '/../includes/header.php';
 ?>
 
 <div class="space-y-6">
-    <!-- Header -->
-    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <!-- Header Banner -->
+    <div class="bg-gradient-to-r from-amber-600 via-amber-700 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-            <h1 class="text-xl font-bold font-kanit text-slate-900 flex items-center gap-2">
-                <span>📜</span> ระบบจัดการและออกเกียรติบัตร (E-Certificate)
+            <div class="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/30 text-amber-100 rounded-full text-xs font-semibold mb-2 border border-amber-400/30">
+                <span>📜</span> Batch E-Certificate Engine (One Data, Many Uses)
+            </div>
+            <h1 class="text-xl sm:text-2xl font-bold font-kanit">
+                ระบบจัดการและออกเกียรติบัตรอิเล็กทรอนิกส์
             </h1>
-            <p class="text-xs text-slate-500 mt-0.5">
-                ออกเกียรติบัตรพร้อม QR Code ตรวจสอบความถูกต้อง รองรับการพิมพ์และซิงค์ไปยัง Google Drive (ทั้งหมด <?= number_format($totalCerts) ?> ฉบับ)
+            <p class="text-xs text-amber-100 mt-1 max-w-2xl leading-relaxed">
+                ออกเกียรติบัตรพร้อมรหัส QR Code สำหรับสแกนตรวจสอบความถูกต้อง และสามารถแก้ไขหรือลบเกียรติบัตรได้ตลอดเวลา
             </p>
+            <div class="flex flex-wrap items-center gap-4 mt-3 text-xs font-medium text-amber-200">
+                <span>เกียรติบัตรในระบบ: <strong class="text-white font-mono"><?= number_format($totalCerts) ?></strong> ฉบับ</span>
+                <span>&bull;</span>
+                <span>🎒 นักเรียน: <strong class="text-white font-mono"><?= number_format($studentCertsCount) ?></strong></span>
+                <span>&bull;</span>
+                <span>👨‍🏫 ครูผู้ฝึกสอน: <strong class="text-white font-mono"><?= number_format($coachCertsCount) ?></strong></span>
+            </div>
         </div>
-        <div class="flex items-center gap-2">
-            <form method="POST" onsubmit="return confirm('ระบบจะทำการตรวจสอบผลการแข่งขันที่ยืนยันแล้ว และออกเกียรติบัตรให้นักเรียนและครูผู้ฝึกสอนทุกคน ต้องการดำเนินการต่อหรือไม่?')">
-                <button type="submit" name="generate_from_results" class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold shadow-sm transition flex items-center gap-1.5 cursor-pointer">
-                    <span>⚡</span> ออกเกียรติบัตรจากผลการแข่งขันทั้งหมด
+
+        <div class="flex flex-col sm:flex-row gap-2.5 shrink-0">
+            <form method="POST" onsubmit="return confirm('⚡ ระบบจะทำการออกเกียรติบัตรให้นักเรียนและครูผู้ฝึกสอนในทุกรายการที่ประกาศผลแล้ว ต้องการดำเนินการหรือไม่?')">
+                <button type="submit" name="generate_from_results" class="w-full sm:w-auto px-5 py-3 bg-white hover:bg-amber-50 text-amber-950 rounded-xl text-xs font-bold shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                    <span>⚡</span> ออกเกียรติบัตรทุกรายการที่รอ (Batch)
                 </button>
             </form>
-            <a href="/admin/settings.php" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium transition">
-                ⚙️ ตั้งค่า GAS
+            <a href="/admin/settings.php" class="px-4 py-3 bg-amber-800/60 hover:bg-amber-800 text-amber-100 rounded-xl text-xs font-semibold border border-amber-500/30 transition flex items-center justify-center gap-1.5">
+                <span>⚙️</span> ตั้งค่าแม่แบบ / Drive
             </a>
         </div>
     </div>
 
     <?php if ($message): ?>
-        <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-2xl flex items-center gap-2 shadow-sm">
-            <span class="text-base">✅</span> <?= htmlspecialchars($message) ?>
+        <div class="p-4 bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs rounded-2xl flex items-center gap-3 shadow-sm">
+            <span class="text-lg">✅</span>
+            <div class="font-medium"><?= htmlspecialchars($message) ?></div>
         </div>
     <?php endif; ?>
 
     <?php if ($error): ?>
-        <div class="p-4 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-2xl flex items-center gap-2 shadow-sm">
-            <span class="text-base">✕</span> <?= htmlspecialchars($error) ?>
+        <div class="p-4 bg-rose-50 border border-rose-300 text-rose-900 text-xs rounded-2xl flex items-center gap-3 shadow-sm">
+            <span class="text-lg">❌</span>
+            <div class="font-medium"><?= htmlspecialchars($error) ?></div>
         </div>
     <?php endif; ?>
 
-    <!-- Filter Bar -->
-    <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 items-center justify-between text-xs">
-        <form method="GET" class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+    <!-- SECTION 1: รายการที่รอออกเกียรติบัตร (Pending Events) -->
+    <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+                <h2 class="text-base font-bold font-kanit text-slate-900 flex items-center gap-2">
+                    <span>⏳</span> รายการที่รอออกเกียรติบัตร 
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-bold <?= count($pendingEvents) > 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600' ?>">
+                        <?= count($pendingEvents) ?> รายการ
+                    </span>
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    รายการแข่งขันที่ประกาศผลแล้ว แต่ยังไม่ได้สร้างเลขที่เกียรติบัตร กดปุ่ม "ออกเกียรติบัตรรายการนี้" เพื่อสร้างได้ทันที
+                </p>
+            </div>
+            <?php if (count($pendingEvents) > 0): ?>
+                <form method="POST" onsubmit="return confirm('ต้องการออกเกียรติบัตรให้รายการที่รอทั้งหมดใช่หรือไม่?')">
+                    <button type="submit" name="generate_from_results" class="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer">
+                        <span>⚡</span> ออกเกียรติบัตรทั้งหมด (<?= count($pendingEvents) ?> รายการ)
+                    </button>
+                </form>
+            <?php endif; ?>
+        </div>
+
+        <?php if (empty($pendingEvents)): ?>
+            <div class="p-6 bg-slate-50/70 rounded-2xl text-center text-slate-500 text-xs flex flex-col items-center justify-center gap-1">
+                <span class="text-2xl">✨</span>
+                <span class="font-bold text-slate-700">ไม่มีรายการแข่งขันที่รอออกเกียรติบัตร</span>
+                <span class="text-[11px] text-slate-400">ทุกรายการที่ประกาศผลได้รับการออกเกียรติบัตรครบถ้วนสมบูรณ์แล้ว</span>
+            </div>
+        <?php else: ?>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <?php foreach ($pendingEvents as $pe): ?>
+                    <div class="p-4 rounded-2xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 transition space-y-3 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between gap-2 mb-1">
+                                <span class="text-xs text-slate-500 flex items-center gap-1 font-semibold">
+                                    <span><?= $pe['sport_icon'] ?></span> <?= htmlspecialchars($pe['sport_name']) ?>
+                                </span>
+                                <span class="px-2 py-0.5 rounded bg-white text-slate-700 font-mono text-[10px] font-bold border border-amber-200">
+                                    <?= htmlspecialchars($pe['event_code']) ?>
+                                </span>
+                            </div>
+                            <h3 class="font-bold font-kanit text-slate-900 text-sm leading-snug">
+                                <?= htmlspecialchars($pe['event_name']) ?>
+                            </h3>
+                            <div class="mt-2 text-[11px] text-slate-600 space-y-0.5 bg-white/80 p-2.5 rounded-xl border border-amber-100">
+                                <div>🥇 ชนะเลิศ: <span class="font-bold text-amber-900"><?= htmlspecialchars($pe['gold_school'] ?: '-') ?></span></div>
+                                <?php if ($pe['silver_school']): ?>
+                                    <div>🥈 รอง 1: <span class="font-medium text-slate-700"><?= htmlspecialchars($pe['silver_school']) ?></span></div>
+                                <?php endif; ?>
+                                <?php if ($pe['bronze_school']): ?>
+                                    <div>🥉 รอง 2: <span class="font-medium text-orange-800"><?= htmlspecialchars($pe['bronze_school']) ?></span></div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <form method="POST" class="pt-1">
+                            <input type="hidden" name="event_id" value="<?= htmlspecialchars($pe['event_id']) ?>">
+                            <button type="submit" name="generate_single_event" class="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+                                <span>⚡</span> ออกเกียรติบัตรรายการนี้
+                            </button>
+                        </form>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- SECTION 2: รายการที่ออกเกียรติบัตรแล้ว (Issued Events) -->
+    <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+                <h2 class="text-base font-bold font-kanit text-slate-900 flex items-center gap-2">
+                    <span>🏆</span> รายการที่ออกเกียรติบัตรแล้ว 
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        <?= count($completedEvents) ?> รายการ
+                    </span>
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    รายการที่สร้างเกียรติบัตรแล้ว สามารถกดดูเกียรติบัตร ออกเพิ่มเติม หรือลบเพื่อสร้างใหม่ได้
+                </p>
+            </div>
+        </div>
+
+        <?php if (empty($completedEvents)): ?>
+            <div class="p-6 bg-slate-50/70 rounded-2xl text-center text-slate-400 text-xs">
+                ยังไม่มีรายการที่ออกเกียรติบัตร กรุณากดปุ่ม "ออกเกียรติบัตร" ในส่วนด้านบน
+            </div>
+        <?php else: ?>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] font-semibold border-b border-slate-200">
+                        <tr>
+                            <th class="p-3.5 pl-6">รายการแข่งขัน</th>
+                            <th class="p-3.5">กีฬา</th>
+                            <th class="p-3.5 text-center">นักเรียน</th>
+                            <th class="p-3.5 text-center">ครูผู้ฝึกสอน</th>
+                            <th class="p-3.5 text-center">รวมที่ออก</th>
+                            <th class="p-3.5 pr-6 text-right">การจัดการรายการ</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <?php foreach ($completedEvents as $ce): ?>
+                            <tr class="hover:bg-slate-50/80 transition">
+                                <td class="p-3.5 pl-6">
+                                    <div class="font-bold font-kanit text-slate-900 text-sm">
+                                        <?= htmlspecialchars($ce['event_name']) ?>
+                                    </div>
+                                    <span class="text-[10px] font-mono text-slate-400 font-bold bg-slate-100 px-1.5 py-0.2 rounded">
+                                        <?= htmlspecialchars($ce['event_code']) ?>
+                                    </span>
+                                </td>
+                                <td class="p-3.5 text-slate-600 font-medium">
+                                    <span><?= $ce['sport_icon'] ?></span> <?= htmlspecialchars($ce['sport_name']) ?>
+                                </td>
+                                <td class="p-3.5 text-center">
+                                    <span class="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-bold text-[11px] border border-blue-200">
+                                        🎒 <?= number_format($ce['student_cert_count']) ?>
+                                    </span>
+                                </td>
+                                <td class="p-3.5 text-center">
+                                    <span class="px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-mono font-bold text-[11px] border border-purple-200">
+                                        👨‍🏫 <?= number_format($ce['coach_cert_count']) ?>
+                                    </span>
+                                </td>
+                                <td class="p-3.5 text-center">
+                                    <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-mono font-bold text-xs">
+                                        <?= number_format($ce['cert_count']) ?> ฉบับ
+                                    </span>
+                                </td>
+                                <td class="p-3.5 pr-6 text-right space-x-1.5">
+                                    <!-- กรองดูในตารางล่าง -->
+                                    <a href="?event_id=<?= urlencode($ce['event_id']) ?>#table-certs" class="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition">
+                                        🔍 ดูรายชื่อ
+                                    </a>
+
+                                    <!-- ออกเพิ่มเติม / ออกใหม่ -->
+                                    <form method="POST" class="inline" onsubmit="return confirm('ระบบจะตรวจสอบผู้ได้รับรางวัลที่ยังไม่มีเกียรติบัตรและสร้างเพิ่ม ต้องการดำเนินการหรือไม่?')">
+                                        <input type="hidden" name="event_id" value="<?= htmlspecialchars($ce['event_id']) ?>">
+                                        <button type="submit" name="generate_single_event" class="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                            🔄 ออกเพิ่ม
+                                        </button>
+                                    </form>
+
+                                    <!-- ลบเกียรติบัตรทั้งหมดของรายการนี้ -->
+                                    <form method="POST" class="inline" onsubmit="return confirm('⚠️ คำเตือน: คุณต้องการลบเกียรติบัตรทั้งหมด (<?= $ce['cert_count'] ?> ฉบับ) ของรายการนี้ใช่หรือไม่? หลังจากลบแล้วจะสามารถกดออกใหม่ได้')">
+                                        <input type="hidden" name="event_id" value="<?= htmlspecialchars($ce['event_id']) ?>">
+                                        <button type="submit" name="delete_event_certs" class="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition cursor-pointer">
+                                            🗑️ ลบทั้งหมด
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- SECTION 3: ตารางรายการเกียรติบัตรทั้งหมด (All Issued Certificates Table) -->
+    <div id="table-certs" class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+                <h2 class="text-base font-bold font-kanit text-slate-900 flex items-center gap-2">
+                    <span>📋</span> รายการเกียรติบัตรทั้งหมดในระบบ (<?= count($certs) ?> ฉบับ)
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    สามารถค้นหา ตรวจสอบ QR Code แก้ไขข้อมูล หรือลบเกียรติบัตรรายฉบับได้
+                </p>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <form method="GET" class="p-4 bg-slate-50/70 border border-slate-200 rounded-2xl flex flex-wrap items-center gap-3 text-xs">
             <input 
                 type="text" 
                 name="search" 
                 value="<?= htmlspecialchars($search) ?>" 
-                placeholder="ค้นหาชื่อผู้รับ, เลขที่, รายการแข่งขัน..." 
-                class="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs w-64"
+                placeholder="🔍 ค้นหาชื่อผู้รับ, เลขที่, รายการ..." 
+                class="p-2.5 bg-white border border-slate-300 rounded-xl text-xs w-60 focus:ring-2 focus:ring-amber-500"
             >
-            <select name="school_id" class="p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs">
-                <option value="">-- โรงเรียนทั้งหมด --</option>
+            <select name="school_id" class="p-2.5 bg-white border border-slate-300 rounded-xl text-xs">
+                <option value="">-- ทุกโรงเรียน --</option>
                 <?php foreach ($schools as $s): ?>
                     <option value="<?= $s['id'] ?>" <?= $filterSchool === $s['id'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($s['school_name']) ?>
                     </option>
                 <?php endforeach; ?>
             </select>
-            <button type="submit" class="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition">
+            <select name="recipient_type" class="p-2.5 bg-white border border-slate-300 rounded-xl text-xs">
+                <option value="">-- ทุกประเภทผู้รับ --</option>
+                <option value="STUDENT" <?= $filterType === 'STUDENT' ? 'selected' : '' ?>>🎒 นักเรียน</option>
+                <option value="COACH" <?= $filterType === 'COACH' ? 'selected' : '' ?>>👨‍🏫 ครูผู้ฝึกสอน</option>
+            </select>
+            <button type="submit" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition shadow-xs cursor-pointer">
                 ค้นหา
             </button>
-            <?php if ($search || $filterSchool): ?>
-                <a href="/admin/certificates.php" class="text-slate-500 hover:text-slate-700 ml-2">ล้างตัวกรอง</a>
+            <?php if ($search || $filterSchool || $filterEvent || $filterType): ?>
+                <a href="/admin/certificates.php#table-certs" class="text-slate-500 hover:text-slate-800 ml-1 font-medium underline">
+                    ล้างตัวกรอง
+                </a>
             <?php endif; ?>
         </form>
-    </div>
 
-    <!-- Certificates Table -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <!-- Certificates Table -->
         <div class="overflow-x-auto">
             <table class="w-full text-left text-xs">
                 <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] font-semibold border-b border-slate-200">
@@ -241,14 +674,14 @@ require_once __DIR__ . '/../includes/header.php';
                         <th class="p-3.5">รายการแข่งขัน</th>
                         <th class="p-3.5">รางวัล</th>
                         <th class="p-3.5 text-center">วันที่ออก</th>
-                        <th class="p-3.5 pr-6 text-right">ลิงก์ / ตรวจสอบ</th>
+                        <th class="p-3.5 pr-6 text-right">การจัดการ</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                     <?php if (empty($certs)): ?>
                         <tr>
                             <td colspan="7" class="p-8 text-center text-slate-400">
-                                📭 ไม่พบรายการเกียรติบัตร กรุณากดปุ่ม "ออกเกียรติบัตรจากผลการแข่งขันทั้งหมด"
+                                📭 ไม่พบรายการเกียรติบัตรตามเงื่อนไขที่ค้นหา
                             </td>
                         </tr>
                     <?php else: ?>
@@ -263,7 +696,7 @@ require_once __DIR__ . '/../includes/header.php';
                                     <span class="font-bold font-kanit text-slate-900 text-sm block">
                                         <?= htmlspecialchars($c['recipient_name']) ?>
                                     </span>
-                                    <span class="text-[10px] text-slate-400">
+                                    <span class="text-[10px] text-slate-500">
                                         <?= $c['recipient_type'] === 'STUDENT' ? '🎒 นักเรียน' : '👨‍🏫 ครูผู้ฝึกสอน' ?>
                                     </span>
                                 </td>
@@ -282,10 +715,25 @@ require_once __DIR__ . '/../includes/header.php';
                                 <td class="p-3.5 text-center text-slate-500 font-mono text-[11px]">
                                     <?= htmlspecialchars($c['issue_date']) ?>
                                 </td>
-                                <td class="p-3.5 pr-6 text-right space-x-2">
-                                    <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="text-blue-600 hover:text-blue-800 font-semibold">
-                                        🔍 ตรวจสอบ QR
+                                <td class="p-3.5 pr-6 text-right space-x-1 whitespace-nowrap">
+                                    <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold inline-flex items-center gap-1 transition">
+                                        🔍 QR
                                     </a>
+                                    <!-- ปุ่มแก้ไข -->
+                                    <button 
+                                        type="button"
+                                        onclick='openEditModal(<?= json_encode($c) ?>)'
+                                        class="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded text-xs font-semibold transition cursor-pointer"
+                                    >
+                                        ✏️ แก้ไข
+                                    </button>
+                                    <!-- ปุ่มลบ -->
+                                    <form method="POST" class="inline" onsubmit="return confirm('ยืนยันการลบเกียรติบัตรฉบับนี้หรือไม่?')">
+                                        <input type="hidden" name="delete_cert_id" value="<?= htmlspecialchars($c['id']) ?>">
+                                        <button type="submit" class="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-xs font-semibold transition cursor-pointer">
+                                            🗑️ ลบ
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -295,5 +743,95 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     </div>
 </div>
+
+<!-- EDIT CERTIFICATE MODAL -->
+<div id="editModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in duration-200">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 class="text-lg font-bold font-kanit text-slate-900 flex items-center gap-2">
+                <span>✏️</span> แก้ไขข้อมูลเกียรติบัตร
+            </h3>
+            <button type="button" onclick="closeEditModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">
+                &times;
+            </button>
+        </div>
+
+        <form method="POST" class="space-y-4 text-xs">
+            <input type="hidden" name="save_edit_cert" value="1">
+            <input type="hidden" name="cert_id" id="edit_cert_id">
+
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">เลขที่เกียรติบัตร <span class="text-rose-500">*</span></label>
+                <input type="text" name="certificate_no" id="edit_cert_no" required class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-amber-500">
+            </div>
+
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">ชื่อผู้ได้รับเกียรติบัตร <span class="text-rose-500">*</span></label>
+                <input type="text" name="recipient_name" id="edit_recipient_name" required class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-amber-500">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1">ประเภทผู้รับ</label>
+                    <select name="recipient_type" id="edit_recipient_type" class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs">
+                        <option value="STUDENT">🎒 นักเรียน</option>
+                        <option value="COACH">👨‍🏫 ครูผู้ฝึกสอน</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block font-bold text-slate-700 mb-1">เหรียญรางวัล</label>
+                    <select name="medal" id="edit_medal" class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs">
+                        <option value="GOLD">🥇 เหรียญทอง</option>
+                        <option value="SILVER">🥈 เหรียญเงิน</option>
+                        <option value="BRONZE">🥉 เหรียญทองแดง</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">โรงเรียน</label>
+                <input type="text" name="school_name" id="edit_school_name" class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium">
+            </div>
+
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">ข้อความรางวัล</label>
+                <input type="text" name="award" id="edit_award" class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium">
+            </div>
+
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">วันที่ออกเกียรติบัตร</label>
+                <input type="date" name="issue_date" id="edit_issue_date" class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono">
+            </div>
+
+            <div class="pt-3 flex gap-2 justify-end">
+                <button type="button" onclick="closeEditModal()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-medium transition cursor-pointer">
+                    ยกเลิก
+                </button>
+                <button type="submit" class="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-sm transition cursor-pointer">
+                    💾 บันทึกการแก้ไข
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openEditModal(cert) {
+    document.getElementById('edit_cert_id').value = cert.id || '';
+    document.getElementById('edit_cert_no').value = cert.certificate_no || '';
+    document.getElementById('edit_recipient_name').value = cert.recipient_name || '';
+    document.getElementById('edit_recipient_type').value = cert.recipient_type || 'STUDENT';
+    document.getElementById('edit_medal').value = cert.medal || 'GOLD';
+    document.getElementById('edit_school_name').value = cert.school_name || '';
+    document.getElementById('edit_award').value = cert.award || '';
+    document.getElementById('edit_issue_date').value = cert.issue_date || '';
+    
+    document.getElementById('editModal').classList.remove('hidden');
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').classList.add('hidden');
+}
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

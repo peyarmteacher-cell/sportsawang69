@@ -335,12 +335,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
   const handleBatchGenerateCertificates = () => {
     setIsGeneratingBatch(true);
     setTimeout(() => {
-      const count = sportsStore.batchGenerateAllCertificates();
+      const res = sportsStore.generateAllBatchCertificates();
       setIsGeneratingBatch(false);
-      setBatchSuccessCount(count);
+      setBatchSuccessCount(res.totalCreated);
       confetti({ particleCount: 100, spread: 80 });
+      if (res.totalCreated > 0) {
+        showNotification(`🎉 ประมวลผลและสร้างเกียรติบัตรสำเร็จ ${res.totalCreated} ฉบับ! (ซ้ำเดิม ${res.totalSkipped} ฉบับ)`);
+      } else {
+        showNotification(`ℹ️ ทุกรายการที่ประกาศผลได้เคยออกเกียรติบัตรครบแล้ว (${res.totalSkipped} ฉบับ)`);
+      }
       setTimeout(() => setBatchSuccessCount(null), 5000);
-    }, 600);
+    }, 500);
+  };
+
+  // Certificate Management State & Handlers
+  const [certSearch, setCertSearch] = useState('');
+  const [certFilterSchool, setCertFilterSchool] = useState('');
+  const [certFilterEvent, setCertFilterEvent] = useState('');
+  const [certFilterType, setCertFilterType] = useState<'ALL' | 'STUDENT' | 'COACH'>('ALL');
+  const [editingCert, setEditingCert] = useState<Certificate | null>(null);
+  const [editCertForm, setEditCertForm] = useState({
+    certificate_no: '',
+    recipient_name: '',
+    school_name: '',
+    award: '',
+    medal: 'GOLD',
+    issue_date: '',
+    recipient_type: 'STUDENT' as 'STUDENT' | 'COACH'
+  });
+
+  const handleOpenEditCert = (cert: Certificate) => {
+    setEditingCert(cert);
+    setEditCertForm({
+      certificate_no: cert.certificate_no,
+      recipient_name: cert.recipient_name,
+      school_name: cert.school_name,
+      award: cert.award,
+      medal: cert.medal,
+      issue_date: cert.issue_date,
+      recipient_type: cert.recipient_type
+    });
+  };
+
+  const handleSaveEditCert = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCert) return;
+    sportsStore.updateCertificate(editingCert.id, editCertForm);
+    setEditingCert(null);
+    showNotification(`แก้ไขเกียรติบัตรเลขที่ ${editCertForm.certificate_no} สำเร็จ`);
+  };
+
+  const handleDeleteCert = (cert: Certificate) => {
+    if (window.confirm(`คุณต้องการลบเกียรติบัตรเลขที่ "${cert.certificate_no}" (${cert.recipient_name}) ใช่หรือไม่?`)) {
+      sportsStore.deleteCertificate(cert.id);
+      showNotification(`ลบเกียรติบัตรของ ${cert.recipient_name} เรียบร้อยแล้ว`);
+    }
+  };
+
+  const handleDeleteEventCertificates = (eventId: string, eventName: string) => {
+    if (window.confirm(`⚠️ คำเตือน: คุณต้องการลบเกียรติบัตรทั้งหมดของรายการ "${eventName}" ใช่หรือไม่?\nหลังจากลบแล้ว คุณสามารถกดออกเกียรติบัตรใหม่ได้ทันที`)) {
+      const count = sportsStore.deleteCertificatesByEvent(eventId);
+      showNotification(`ลบเกียรติบัตรของรายการ "${eventName}" จำนวน ${count} ฉบับเรียบร้อยแล้ว`);
+    }
+  };
+
+  const handleGenerateSingleEventCertificates = (eventId: string, eventName: string) => {
+    const res = sportsStore.generateCertificatesForEvent(eventId);
+    confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
+    if (res.createdCount > 0) {
+      showNotification(`🎉 ออกเกียรติบัตรรายการ "${eventName}" สำเร็จ ${res.createdCount} ฉบับ! (ซ้ำเดิม ${res.skippedCount} ฉบับ)`);
+    } else {
+      showNotification(`ℹ️ รายการ "${eventName}" มีเกียรติบัตรครบถ้วนแล้ว (${res.skippedCount} ฉบับ)`);
+    }
   };
 
   // --- USER MANAGEMENT HANDLERS ---
@@ -730,6 +796,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `header_bg_image` TEXT DEFAULT NULL", msg: "เพิ่มคอลัมน์ header_bg_image สำหรับตกแต่งหัวเว็บ สำเร็จ" },
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `google_drive_folder_id` VARCHAR(255) DEFAULT NULL", msg: "เพิ่มคอลัมน์ google_drive_folder_id สำเร็จ" },
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `google_slide_template_id` VARCHAR(255) DEFAULT NULL", msg: "เพิ่มคอลัมน์ google_slide_template_id สำเร็จ" },
+      { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `google_slide_template_student_id` VARCHAR(255) DEFAULT NULL", msg: "เพิ่มคอลัมน์ google_slide_template_student_id สำหรับแม่แบบนักเรียน สำเร็จ" },
+      { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `google_slide_template_coach_id` VARCHAR(255) DEFAULT NULL", msg: "เพิ่มคอลัมน์ google_slide_template_coach_id สำหรับแม่แบบครู สำเร็จ" },
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `president_name` VARCHAR(150) DEFAULT NULL", msg: "เพิ่มคอลัมน์ president_name (ประธานจัดการแข่งขัน) สำเร็จ" },
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `director_name` VARCHAR(150) DEFAULT NULL", msg: "เพิ่มคอลัมน์ director_name (ผอ.เขตพื้นที่ฯ) สำเร็จ" },
       { q: "ALTER TABLE `competitions` ADD COLUMN IF NOT EXISTS `cert_prefix` VARCHAR(50) DEFAULT 'สพป.บร.3/2569-'", msg: "เพิ่มคอลัมน์ cert_prefix สำเร็จ" },
@@ -2867,109 +2935,414 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
       )}
 
       {/* TAB 5: CERTIFICATES */}
-      {activeTab === 'CERTIFICATES' && (
-        <div className="space-y-6">
-          <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white rounded-2xl p-6 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-900/30 text-amber-100 rounded-full text-xs font-semibold mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-amber-200" /> ระบบ One Data, Many Uses
-              </div>
-              <h2 className="text-xl font-bold font-['Kanit']">
-                ศูนย์สร้างและออกเกียรติบัตรอัตโนมัติ (Batch E-Certificate Engine)
-              </h2>
-              <p className="text-xs text-amber-100 mt-1 max-w-xl">
-                ระบบจะดึงรายชื่อนักเรียนและครูจากทุกรายการที่บันทึกผลเสร็จสิ้น มาสร้างเกียรติบัตร เลขที่เอกสารรันต่อเนื่อง และสร้าง QR Code อัตโนมัติในคลิกเดียว
-              </p>
-            </div>
+      {activeTab === 'CERTIFICATES' && (() => {
+        // Computed pending events and completed events
+        const pendingCertEvents = events.filter(
+          (e) => results.some((r) => r.event_id === e.id) && !certificates.some((c) => c.event_id === e.id)
+        );
+        const completedCertEvents = events.filter(
+          (e) => certificates.some((c) => c.event_id === e.id)
+        );
 
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                onClick={handleBatchGenerateCertificates}
-                disabled={isGeneratingBatch}
-                className="px-5 py-3 bg-white hover:bg-amber-50 text-amber-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center gap-2 whitespace-nowrap disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 text-amber-600 ${isGeneratingBatch ? 'animate-spin' : ''}`} />
-                {isGeneratingBatch ? 'กำลังประมวลผล...' : '⚡ ออกเกียรติบัตรทั้งหมดอัตโนมัติ'}
-              </button>
-            </div>
-          </div>
+        // Filtered certificates
+        const filteredCerts = certificates.filter((cert) => {
+          if (certSearch) {
+            const s = certSearch.toLowerCase();
+            const matchName = cert.recipient_name.toLowerCase().includes(s);
+            const matchNo = cert.certificate_no.toLowerCase().includes(s);
+            const matchSchool = cert.school_name.toLowerCase().includes(s);
+            const matchEvent = cert.event_name.toLowerCase().includes(s);
+            if (!matchName && !matchNo && !matchSchool && !matchEvent) return false;
+          }
+          if (certFilterSchool && cert.school_id !== certFilterSchool) return false;
+          if (certFilterEvent && cert.event_id !== certFilterEvent) return false;
+          if (certFilterType !== 'ALL' && cert.recipient_type !== certFilterType) return false;
+          return true;
+        });
 
-          {batchSuccessCount !== null && (
-            <div className="p-4 bg-emerald-50 text-emerald-900 text-xs rounded-xl border border-emerald-300 font-medium flex items-center gap-3">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+        const studentCertsCount = certificates.filter((c) => c.recipient_type === 'STUDENT').length;
+        const coachCertsCount = certificates.filter((c) => c.recipient_type === 'COACH').length;
+
+        return (
+          <div className="space-y-6">
+            {/* Top Banner */}
+            <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>
-                <p className="font-bold">สร้างเกียรติบัตรเสร็จสมบูรณ์!</p>
-                <p className="text-slate-600">
-                  มีเกียรติบัตรในระบบรวมทั้งสิ้น {certificates.length} ฉบับ (เพิ่มใหม่ {batchSuccessCount} ฉบับ)
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/30 text-amber-100 rounded-full text-xs font-semibold mb-2 border border-amber-400/30">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" /> ระบบ One Data, Many Uses
+                </div>
+                <h2 className="text-xl sm:text-2xl font-bold font-['Kanit']">
+                  ศูนย์สร้างและออกเกียรติบัตรอัตโนมัติ (Batch E-Certificate Engine)
+                </h2>
+                <p className="text-xs text-amber-100 mt-1 max-w-2xl leading-relaxed">
+                  ระบบจะดึงผลการแข่งขันที่ประกาศแล้ว มาสร้างเลขที่เกียรติบัตรต่อเนื่อง พร้อมรหัสตรวจสอบ QR Verification และเชื่อมโยง Google Drive ทันที
                 </p>
+                <div className="flex flex-wrap items-center gap-3 mt-3 text-xs font-medium text-amber-200">
+                  <span>เกียรติบัตรในระบบ: <strong className="text-white font-mono">{certificates.length}</strong> ฉบับ</span>
+                  <span>&bull;</span>
+                  <span>🎒 นักเรียน: <strong className="text-white font-mono">{studentCertsCount}</strong></span>
+                  <span>&bull;</span>
+                  <span>👨‍🏫 ครูผู้ฝึกสอน: <strong className="text-white font-mono">{coachCertsCount}</strong></span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                <button
+                  onClick={handleBatchGenerateCertificates}
+                  disabled={isGeneratingBatch}
+                  className="px-5 py-3 bg-white hover:bg-amber-50 text-amber-950 font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 text-amber-600 ${isGeneratingBatch ? 'animate-spin' : ''}`} />
+                  {isGeneratingBatch ? 'กำลังประมวลผล...' : '⚡ ออกเกียรติบัตรทุกรายการที่รอ (Batch)'}
+                </button>
               </div>
             </div>
-          )}
 
-          {/* Certificate Table */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-900 text-base font-['Kanit']">
-                รายการเกียรติบัตรทั้งหมดในระบบ ({certificates.length} ฉบับ)
-              </h3>
-              <span className="text-xs text-slate-500">
-                พร้อมระบบ QR Verification Token
-              </span>
+            {batchSuccessCount !== null && (
+              <div className="p-4 bg-emerald-50 text-emerald-900 text-xs rounded-2xl border border-emerald-300 font-medium flex items-center gap-3 shadow-xs">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="font-bold">สร้างเกียรติบัตรเสร็จสมบูรณ์!</p>
+                  <p className="text-slate-600">
+                    มีเกียรติบัตรในระบบรวมทั้งสิ้น {certificates.length} ฉบับ (สร้างใหม่ {batchSuccessCount} ฉบับ)
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* SECTION 1: รายการที่รอออกเกียรติบัตร (Pending Events) */}
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-base font-bold font-['Kanit'] text-slate-900 flex items-center gap-2">
+                    <span>⏳</span> รายการที่รอออกเกียรติบัตร
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                      pendingCertEvents.length > 0 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {pendingCertEvents.length} รายการ
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    รายการแข่งขันที่ประกาศผลแล้ว แต่ยังไม่ได้สร้างเลขที่เกียรติบัตร กดปุ่ม "ออกเกียรติบัตรรายการนี้" เพื่อสร้างได้ทันที
+                  </p>
+                </div>
+                {pendingCertEvents.length > 0 && (
+                  <button
+                    onClick={handleBatchGenerateCertificates}
+                    disabled={isGeneratingBatch}
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>⚡</span> ออกเกียรติบัตรทั้งหมด ({pendingCertEvents.length} รายการ)
+                  </button>
+                )}
+              </div>
+
+              {pendingCertEvents.length === 0 ? (
+                <div className="p-6 bg-slate-50/70 rounded-2xl text-center text-slate-500 text-xs flex flex-col items-center justify-center gap-1">
+                  <span className="text-2xl">✨</span>
+                  <span className="font-bold text-slate-700">ไม่มีรายการแข่งขันที่รอออกเกียรติบัตร</span>
+                  <span className="text-[11px] text-slate-400">ทุกรายการที่ประกาศผลได้รับการออกเกียรติบัตรครบถ้วนสมบูรณ์แล้ว</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pendingCertEvents.map((pe) => {
+                    const sp = sports.find((s) => s.id === pe.sport_id);
+                    const evResults = results.filter((r) => r.event_id === pe.id);
+                    const goldRes = evResults.find((r) => r.medal === 'GOLD');
+                    const silverRes = evResults.find((r) => r.medal === 'SILVER');
+                    const bronzeRes = evResults.find((r) => r.medal === 'BRONZE');
+                    const goldSch = schools.find((s) => s.id === goldRes?.school_id);
+                    const silverSch = schools.find((s) => s.id === silverRes?.school_id);
+                    const bronzeSch = schools.find((s) => s.id === bronzeRes?.school_id);
+
+                    return (
+                      <div key={pe.id} className="p-4 rounded-2xl border border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 transition space-y-3 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-xs text-slate-500 flex items-center gap-1 font-semibold">
+                              <span>{sp?.sport_icon || '🏆'}</span> {sp?.sport_name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-white text-slate-700 font-mono text-[10px] font-bold border border-amber-200">
+                              {pe.event_code}
+                            </span>
+                          </div>
+                          <h4 className="font-bold font-['Kanit'] text-slate-900 text-sm leading-snug">
+                            {pe.event_name}
+                          </h4>
+                          <div className="mt-2 text-[11px] text-slate-600 space-y-0.5 bg-white/80 p-2.5 rounded-xl border border-amber-100">
+                            <div>🥇 ชนะเลิศ: <span className="font-bold text-amber-900">{goldSch?.school_name || '-'}</span></div>
+                            {silverSch && <div>🥈 รอง 1: <span className="font-medium text-slate-700">{silverSch.school_name}</span></div>}
+                            {bronzeSch && <div>🥉 รอง 2: <span className="font-medium text-orange-800">{bronzeSch.school_name}</span></div>}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => handleGenerateSingleEventCertificates(pe.id, pe.event_name)}
+                          className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span>⚡</span> ออกเกียรติบัตรรายการนี้
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
-                    <th className="py-3 px-3">เลขที่เกียรติบัตร</th>
-                    <th className="py-3 px-3">ผู้ได้รับเกียรติบัตร</th>
-                    <th className="py-3 px-3">โรงเรียน</th>
-                    <th className="py-3 px-3">รางวัลที่ได้รับ</th>
-                    <th className="py-3 px-3">รายการแข่งขัน</th>
-                    <th className="py-3 px-3 text-center">Google Drive</th>
-                    <th className="py-3 px-3 text-center">พิมพ์ / ดู</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {certificates.map((cert) => (
-                    <tr key={cert.id} className="hover:bg-slate-50">
-                      <td className="py-3 px-3 font-mono font-semibold text-blue-900">
-                        {cert.certificate_no}
-                      </td>
-                      <td className="py-3 px-3">
-                        <p className="font-semibold text-slate-900">{cert.recipient_name}</p>
-                        <span className="text-[10px] text-slate-500">
-                          {cert.recipient_type === 'STUDENT' ? 'นักเรียน' : 'ครูผู้ฝึกสอน'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-slate-700">{cert.school_name}</td>
-                      <td className="py-3 px-3 font-semibold text-amber-800">{cert.award}</td>
-                      <td className="py-3 px-3 text-slate-600">{cert.event_name}</td>
-                      <td className="py-3 px-3 text-center">
-                        {cert.drive_file_id ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-sky-700 bg-sky-50 px-2 py-0.5 rounded">
-                            <Cloud className="w-3 h-3" /> ซิงค์แล้ว
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-slate-400">ยังไม่ซิงค์</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-center">
-                        <button
-                          onClick={() => setViewingCert(cert)}
-                          className="px-2.5 py-1 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs"
-                        >
-                          <Printer className="w-3 h-3" /> เปิดเกียรติบัตร
-                        </button>
-                      </td>
-                    </tr>
+            {/* SECTION 2: รายการที่ออกเกียรติบัตรแล้ว (Issued Events) */}
+            <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-base font-bold font-['Kanit'] text-slate-900 flex items-center gap-2">
+                    <span>🏆</span> รายการที่ออกเกียรติบัตรแล้ว
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      {completedCertEvents.length} รายการ
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    รายการที่สร้างเกียรติบัตรแล้ว สามารถกดดูรายชื่อ ออกเพิ่มเติม หรือลบทั้งหมดเพื่อสร้างใหม่ได้
+                  </p>
+                </div>
+              </div>
+
+              {completedCertEvents.length === 0 ? (
+                <div className="p-6 bg-slate-50/70 rounded-2xl text-center text-slate-400 text-xs">
+                  ยังไม่มีรายการที่ออกเกียรติบัตร กรุณากดปุ่ม "ออกเกียรติบัตร" ในส่วนด้านบน
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[11px] font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="p-3.5 pl-6">รายการแข่งขัน</th>
+                        <th className="p-3.5">กีฬา</th>
+                        <th className="p-3.5 text-center">นักเรียน</th>
+                        <th className="p-3.5 text-center">ครูผู้ฝึกสอน</th>
+                        <th className="p-3.5 text-center">รวมที่ออก</th>
+                        <th className="p-3.5 pr-6 text-right">การจัดการรายการ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {completedCertEvents.map((ce) => {
+                        const sp = sports.find((s) => s.id === ce.sport_id);
+                        const evCerts = certificates.filter((c) => c.event_id === ce.id);
+                        const stCount = evCerts.filter((c) => c.recipient_type === 'STUDENT').length;
+                        const coachCount = evCerts.filter((c) => c.recipient_type === 'COACH').length;
+
+                        return (
+                          <tr key={ce.id} className="hover:bg-slate-50/80 transition">
+                            <td className="p-3.5 pl-6">
+                              <div className="font-bold font-['Kanit'] text-slate-900 text-sm">
+                                {ce.event_name}
+                              </div>
+                              <span className="text-[10px] font-mono text-slate-400 font-bold bg-slate-100 px-1.5 py-0.5 rounded">
+                                {ce.event_code}
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-slate-600 font-medium">
+                              <span>{sp?.sport_icon || '🏆'}</span> {sp?.sport_name}
+                            </td>
+                            <td className="p-3.5 text-center">
+                              <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-mono font-bold text-[11px] border border-blue-200">
+                                🎒 {stCount}
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-center">
+                              <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 font-mono font-bold text-[11px] border border-purple-200">
+                                👨‍🏫 {coachCount}
+                              </span>
+                            </td>
+                            <td className="p-3.5 text-center">
+                              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-mono font-bold text-xs">
+                                {evCerts.length} ฉบับ
+                              </span>
+                            </td>
+                            <td className="p-3.5 pr-6 text-right space-x-1.5 whitespace-nowrap">
+                              <button
+                                onClick={() => {
+                                  setCertFilterEvent(ce.id);
+                                  const el = document.getElementById('table-admin-certs');
+                                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                                }}
+                                className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition cursor-pointer"
+                              >
+                                <Search className="w-3 h-3" /> ดูรายชื่อ
+                              </button>
+                              <button
+                                onClick={() => handleGenerateSingleEventCertificates(ce.id, ce.event_name)}
+                                className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold transition cursor-pointer"
+                              >
+                                🔄 ออกเพิ่ม
+                              </button>
+                              <button
+                                onClick={() => handleDeleteEventCertificates(ce.id, ce.event_name)}
+                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-semibold transition cursor-pointer"
+                              >
+                                🗑️ ลบทั้งหมด
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* SECTION 3: ตารางรายการเกียรติบัตรทั้งหมด (Issued Certificates Table) */}
+            <div id="table-admin-certs" className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base font-['Kanit'] flex items-center gap-2">
+                    <span>📋</span> รายการเกียรติบัตรทั้งหมดในระบบ ({filteredCerts.length} / {certificates.length} ฉบับ)
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    สามารถค้นหา ตรวจสอบ QR Code แก้ไขข้อมูล หรือลบเกียรติบัตรรายฉบับได้
+                  </p>
+                </div>
+              </div>
+
+              {/* Filter Bar */}
+              <div className="p-4 bg-slate-50/70 border border-slate-200 rounded-2xl flex flex-wrap items-center gap-3 text-xs">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={certSearch}
+                    onChange={(e) => setCertSearch(e.target.value)}
+                    placeholder="🔍 ค้นหาชื่อผู้รับ, เลขที่, โรงเรียน..."
+                    className="p-2.5 bg-white border border-slate-300 rounded-xl text-xs w-60 focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+                <select
+                  value={certFilterSchool}
+                  onChange={(e) => setCertFilterSchool(e.target.value)}
+                  className="p-2.5 bg-white border border-slate-300 rounded-xl text-xs"
+                >
+                  <option value="">-- ทุกโรงเรียน --</option>
+                  {schools.map((s) => (
+                    <option key={s.id} value={s.id}>{s.school_name}</option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+                <select
+                  value={certFilterEvent}
+                  onChange={(e) => setCertFilterEvent(e.target.value)}
+                  className="p-2.5 bg-white border border-slate-300 rounded-xl text-xs max-w-xs"
+                >
+                  <option value="">-- ทุกรายการแข่งขัน --</option>
+                  {events.map((e) => (
+                    <option key={e.id} value={e.id}>{e.event_code} - {e.event_name}</option>
+                  ))}
+                </select>
+                <select
+                  value={certFilterType}
+                  onChange={(e) => setCertFilterType(e.target.value as any)}
+                  className="p-2.5 bg-white border border-slate-300 rounded-xl text-xs"
+                >
+                  <option value="ALL">-- ทุกประเภทผู้รับ --</option>
+                  <option value="STUDENT">🎒 นักเรียน</option>
+                  <option value="COACH">👨‍🏫 ครูผู้ฝึกสอน</option>
+                </select>
+                {(certSearch || certFilterSchool || certFilterEvent || certFilterType !== 'ALL') && (
+                  <button
+                    onClick={() => {
+                      setCertSearch('');
+                      setCertFilterSchool('');
+                      setCertFilterEvent('');
+                      setCertFilterType('ALL');
+                    }}
+                    className="text-slate-500 hover:text-slate-800 text-xs font-medium underline ml-1 cursor-pointer"
+                  >
+                    ล้างตัวกรอง
+                  </button>
+                )}
+              </div>
+
+              {/* Certificates Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
+                      <th className="py-3 px-3">เลขที่เกียรติบัตร</th>
+                      <th className="py-3 px-3">ผู้ได้รับเกียรติบัตร</th>
+                      <th className="py-3 px-3">โรงเรียน</th>
+                      <th className="py-3 px-3">รางวัลที่ได้รับ</th>
+                      <th className="py-3 px-3">รายการแข่งขัน</th>
+                      <th className="py-3 px-3 text-center">วันที่ออก</th>
+                      <th className="py-3 px-3 pr-4 text-right">การจัดการ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredCerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                          📭 ไม่พบรายการเกียรติบัตรตามเงื่อนไขที่ค้นหา
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredCerts.map((cert) => (
+                        <tr key={cert.id} className="hover:bg-slate-50 transition">
+                          <td className="py-3 px-3 font-mono font-semibold text-blue-900">
+                            <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[11px]">
+                              {cert.certificate_no}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <p className="font-semibold text-slate-900">{cert.recipient_name}</p>
+                            <span className="text-[10px] text-slate-500">
+                              {cert.recipient_type === 'STUDENT' ? '🎒 นักเรียน' : '👨‍🏫 ครูผู้ฝึกสอน'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-slate-700 font-medium">{cert.school_name}</td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                              cert.medal === 'GOLD' ? 'bg-amber-100 text-amber-900' :
+                              cert.medal === 'SILVER' ? 'bg-slate-200 text-slate-800' :
+                              'bg-orange-100 text-orange-900'
+                            }`}>
+                              {cert.award}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-slate-600">
+                            <div>{cert.event_name}</div>
+                            <span className="text-[10px] text-slate-400">{cert.sport_name}</span>
+                          </td>
+                          <td className="py-3 px-3 text-center text-slate-500 font-mono text-[11px]">
+                            {cert.issue_date}
+                          </td>
+                          <td className="py-3 px-3 pr-4 text-right space-x-1 whitespace-nowrap">
+                            <button
+                              onClick={() => setViewingCert(cert)}
+                              className="px-2 py-1 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                              title="เปิดเกียรติบัตร / พิมพ์"
+                            >
+                              <Printer className="w-3 h-3" /> เปิด
+                            </button>
+                            <button
+                              onClick={() => handleOpenEditCert(cert)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="แก้ไขข้อมูลเกียรติบัตร"
+                            >
+                              <Edit2 className="w-3 h-3" /> แก้ไข
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCert(cert)}
+                              className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-medium rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              title="ลบเกียรติบัตร"
+                            >
+                              <Trash2 className="w-3 h-3" /> ลบ
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* TAB 6: DATABASE & UPDATE TABLES SYSTEM (SUPER ADMIN FEATURE) */}
       {activeTab === 'DATABASE' && isSuperAdmin && (
@@ -3788,6 +4161,125 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                 </button>
                 <button type="submit" className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition">
                   {editingSportId ? 'บันทึกการแก้ไข' : 'บันทึกชนิดกีฬา'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT CERTIFICATE */}
+      {editingCert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold font-['Kanit'] text-slate-900 flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-amber-600" /> แก้ไขข้อมูลเกียรติบัตร
+              </h3>
+              <button
+                onClick={() => setEditingCert(null)}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCert} className="space-y-3.5 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">เลขที่เกียรติบัตร</label>
+                <input
+                  type="text"
+                  required
+                  value={editCertForm.certificate_no}
+                  onChange={(e) => setEditCertForm({ ...editCertForm, certificate_no: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl font-mono text-sm focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">ชื่อ-สกุล ผู้ได้รับเกียรติบัตร</label>
+                <input
+                  type="text"
+                  required
+                  value={editCertForm.recipient_name}
+                  onChange={(e) => setEditCertForm({ ...editCertForm, recipient_name: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-sm focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">ประเภทผู้รับ</label>
+                  <select
+                    value={editCertForm.recipient_type}
+                    onChange={(e) => setEditCertForm({ ...editCertForm, recipient_type: e.target.value as any })}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-sm"
+                  >
+                    <option value="STUDENT">🎒 นักเรียน</option>
+                    <option value="COACH">👨‍🏫 ครูผู้ฝึกสอน</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">เหรียญรางวัล</label>
+                  <select
+                    value={editCertForm.medal}
+                    onChange={(e) => setEditCertForm({ ...editCertForm, medal: e.target.value })}
+                    className="w-full p-2.5 border border-slate-300 rounded-xl text-sm"
+                  >
+                    <option value="GOLD">🥇 ชนะเลิศ (เหรียญทอง)</option>
+                    <option value="SILVER">🥈 รองชนะเลิศอันดับ 1 (เหรียญเงิน)</option>
+                    <option value="BRONZE">🥉 รองชนะเลิศอันดับ 2 (เหรียญทองแดง)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">โรงเรียน / สังกัด</label>
+                <input
+                  type="text"
+                  required
+                  value={editCertForm.school_name}
+                  onChange={(e) => setEditCertForm({ ...editCertForm, school_name: e.target.value })}
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">ข้อความรางวัลที่ได้รับ</label>
+                <input
+                  type="text"
+                  required
+                  value={editCertForm.award}
+                  onChange={(e) => setEditCertForm({ ...editCertForm, award: e.target.value })}
+                  placeholder="เช่น รางวัลชนะเลิศ เหรียญทอง"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">วันที่ออกเอกสาร</label>
+                <input
+                  type="text"
+                  value={editCertForm.issue_date}
+                  onChange={(e) => setEditCertForm({ ...editCertForm, issue_date: e.target.value })}
+                  placeholder="เช่น 15 มกราคม 2569"
+                  className="w-full p-2.5 border border-slate-300 rounded-xl text-sm"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingCert(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-xl transition shadow-xs cursor-pointer"
+                >
+                  บันทึกการแก้ไข
                 </button>
               </div>
             </form>

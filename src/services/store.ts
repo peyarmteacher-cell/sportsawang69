@@ -298,6 +298,36 @@ class SportsDataStore {
     return list.filter((c) => !c.competition_id || isMatchingCompId(c.competition_id, compId));
   }
 
+  public updateCertificate(id: string, updates: Partial<Certificate>) {
+    const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
+    const idx = list.findIndex((c) => c.id === id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...updates };
+      localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(list));
+      this.logActivity('UPDATE_CERTIFICATE', 'certificates', id, `แก้ไขข้อมูลเกียรติบัตร: ${list[idx].recipient_name} (${list[idx].certificate_no})`);
+      this.notify();
+    }
+  }
+
+  public deleteCertificate(id: string) {
+    const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
+    const target = list.find((c) => c.id === id);
+    const updated = list.filter((c) => c.id !== id);
+    localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(updated));
+    this.logActivity('DELETE_CERTIFICATE', 'certificates', id, `ลบเกียรติบัตร: ${target?.recipient_name || id} (${target?.certificate_no || ''})`);
+    this.notify();
+  }
+
+  public deleteCertificatesByEvent(eventId: string) {
+    const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
+    const updated = list.filter((c) => c.event_id !== eventId);
+    const deletedCount = list.length - updated.length;
+    localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(updated));
+    this.logActivity('DELETE_EVENT_CERTIFICATES', 'certificates', eventId, `ลบเกียรติบัตรของรายการแข่งขัน ${eventId} จำนวน ${deletedCount} ฉบับ`);
+    this.notify();
+    return deletedCount;
+  }
+
   public getSettings(): Setting[] {
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS) || '[]');
   }
@@ -1108,7 +1138,8 @@ class SportsDataStore {
   // Certificate Auto-Generator from Results ("One Data, Many Uses")
   public generateCertificatesForEvent(eventId: string): { createdCount: number; skippedCount: number } {
     const compId = this.getCurrentCompetitionId();
-    const results = this.getResults().filter((r) => r.event_id === eventId && r.status === 'CONFIRMED');
+    // Accept results that belong to this event (CONFIRMED, OFFICIAL, or any recorded result)
+    const results = this.getResults().filter((r) => r.event_id === eventId);
     const existingCerts = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
     const registrations = this.getRegistrations().filter((r) => r.event_id === eventId);
     const regStudents = this.getRegistrationStudents();
@@ -1126,23 +1157,78 @@ class SportsDataStore {
 
     results.forEach((res) => {
       const school = schools.find((s) => s.id === res.school_id);
+      if (!school) return;
+
       const reg = registrations.find((r) => r.school_id === res.school_id);
 
-      if (!reg || !school) return;
+      // 1. Generate for Students in this registration or fallback to school students / team
+      let linkedStudents: Student[] = [];
+      if (reg) {
+        linkedStudents = regStudents
+          .filter((rs) => rs.registration_id === reg.id)
+          .map((rs) => students.find((s) => s.id === rs.student_id))
+          .filter(Boolean) as Student[];
+      }
 
-      // 1. Generate for Students in this registration
-      const linkedStudents = regStudents
-        .filter((rs) => rs.registration_id === reg.id)
-        .map((rs) => students.find((s) => s.id === rs.student_id))
-        .filter(Boolean) as Student[];
+      // If no specific students were linked in registration, fallback to school athletes
+      if (linkedStudents.length === 0) {
+        linkedStudents = students.filter((s) => s.school_id === school.id).slice(0, 5);
+      }
 
-      linkedStudents.forEach((student) => {
-        // Prevent duplicate certificate
+      if (linkedStudents.length > 0) {
+        linkedStudents.forEach((student) => {
+          // Prevent duplicate certificate
+          const alreadyExists = existingCerts.some(
+            (c: Certificate) =>
+              c.competition_id === compId &&
+              c.event_id === eventId &&
+              c.recipient_id === student.id &&
+              c.status === 'ISSUED'
+          );
+
+          if (alreadyExists) {
+            skippedCount++;
+          } else {
+            const certNo = this.getNextCertificateNumber();
+            const qrToken = `TOKEN_SSK69_${Math.random().toString(36).substring(2, 10).toUpperCase()}_${certNo.replace(/[^0-9]/g, '')}`;
+            const awardText = `${res.award} (${res.medal === 'GOLD' ? 'เหรียญทอง 🥇' : res.medal === 'SILVER' ? 'เหรียญเงิน 🥈' : res.medal === 'BRONZE' ? 'เหรียญทองแดง 🥉' : ''})`;
+
+            const newCert: Certificate = {
+              id: `cert-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+              competition_id: compId,
+              certificate_no: certNo,
+              recipient_type: 'STUDENT',
+              recipient_id: student.id,
+              recipient_name: `${student.prefix}${student.first_name} ${student.last_name}`,
+              school_id: school.id,
+              school_name: school.school_name,
+              event_id: eventId,
+              event_name: targetEvent?.event_name || 'รายการแข่งขัน',
+              sport_name: targetSport?.sport_name || 'กีฬา',
+              result_id: res.id,
+              award: awardText,
+              medal: res.medal,
+              issue_date: new Date().toISOString().split('T')[0],
+              template_type: 'STUDENT',
+              drive_file_id: `gdrive_${certNo}_${Date.now()}`,
+              drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
+              qr_token: qrToken,
+              status: 'ISSUED',
+              created_at: new Date().toISOString()
+            };
+
+            existingCerts.push(newCert);
+            createdCount++;
+          }
+        });
+      } else {
+        // Fallback: Team certificate for the school
         const alreadyExists = existingCerts.some(
           (c: Certificate) =>
             c.competition_id === compId &&
             c.event_id === eventId &&
-            c.recipient_id === student.id &&
+            c.school_id === school.id &&
+            c.recipient_type === 'STUDENT' &&
             c.status === 'ISSUED'
         );
 
@@ -1158,8 +1244,8 @@ class SportsDataStore {
             competition_id: compId,
             certificate_no: certNo,
             recipient_type: 'STUDENT',
-            recipient_id: student.id,
-            recipient_name: `${student.prefix}${student.first_name} ${student.last_name}`,
+            recipient_id: school.id,
+            recipient_name: `ตัวแทนนักกีฬาโรงเรียน${school.school_name}`,
             school_id: school.id,
             school_name: school.school_name,
             event_id: eventId,
@@ -1180,31 +1266,86 @@ class SportsDataStore {
           existingCerts.push(newCert);
           createdCount++;
         }
-      });
+      }
 
       // 2. Generate for Coach(es)
       const coachList: Coach[] = [];
-      if (reg.coach_ids && Array.isArray(reg.coach_ids)) {
+      if (reg?.coach_ids && Array.isArray(reg.coach_ids)) {
         reg.coach_ids.forEach((cId: string) => {
           const c = coaches.find((coach: Coach) => coach.id === cId);
           if (c && !coachList.some((item) => item.id === c.id)) coachList.push(c);
         });
       }
-      if (reg.coach_id) {
+      if (reg?.coach_id) {
         const c1 = coaches.find((c: Coach) => c.id === reg.coach_id);
         if (c1 && !coachList.some((item) => item.id === c1.id)) coachList.push(c1);
       }
-      if (reg.secondary_coach_id) {
+      if (reg?.secondary_coach_id) {
         const c2 = coaches.find((c: Coach) => c.id === reg.secondary_coach_id);
         if (c2 && !coachList.some((item) => item.id === c2.id)) coachList.push(c2);
       }
 
-      coachList.forEach((coach) => {
+      // Fallback: coaches registered under this school
+      if (coachList.length === 0) {
+        const schoolCoaches = coaches.filter((c) => c.school_id === school.id);
+        if (schoolCoaches.length > 0) {
+          coachList.push(schoolCoaches[0]);
+        }
+      }
+
+      if (coachList.length > 0) {
+        coachList.forEach((coach) => {
+          const alreadyExists = existingCerts.some(
+            (c: Certificate) =>
+              c.competition_id === compId &&
+              c.event_id === eventId &&
+              c.recipient_id === coach.id &&
+              c.recipient_type === 'COACH' &&
+              c.status === 'ISSUED'
+          );
+
+          if (alreadyExists) {
+            skippedCount++;
+          } else {
+            const certNo = this.getNextCertificateNumber();
+            const qrToken = `TOKEN_SSK69_${Math.random().toString(36).substring(2, 10).toUpperCase()}_${certNo.replace(/[^0-9]/g, '')}`;
+            const awardText = `ครูผู้ฝึกสอนนักกีฬา ${res.award} (${res.medal === 'GOLD' ? 'เหรียญทอง 🥇' : res.medal === 'SILVER' ? 'เหรียญเงิน 🥈' : res.medal === 'BRONZE' ? 'เหรียญทองแดง 🥉' : ''})`;
+
+            const newCert: Certificate = {
+              id: `cert-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+              competition_id: compId,
+              certificate_no: certNo,
+              recipient_type: 'COACH',
+              recipient_id: coach.id,
+              recipient_name: `${coach.prefix}${coach.first_name} ${coach.last_name}`,
+              school_id: school.id,
+              school_name: school.school_name,
+              event_id: eventId,
+              event_name: targetEvent?.event_name || 'รายการแข่งขัน',
+              sport_name: targetSport?.sport_name || 'กีฬา',
+              result_id: res.id,
+              award: awardText,
+              medal: res.medal,
+              issue_date: new Date().toISOString().split('T')[0],
+              template_type: 'COACH',
+              drive_file_id: `gdrive_${certNo}_${Date.now()}`,
+              drive_url: `https://drive.google.com/file/d/gdrive_${certNo}/view`,
+              qr_token: qrToken,
+              status: 'ISSUED',
+              created_at: new Date().toISOString()
+            };
+
+            existingCerts.push(newCert);
+            createdCount++;
+          }
+        });
+      } else {
+        // Fallback: coach cert for school
         const alreadyExists = existingCerts.some(
           (c: Certificate) =>
             c.competition_id === compId &&
             c.event_id === eventId &&
-            c.recipient_id === coach.id &&
+            c.school_id === school.id &&
             c.recipient_type === 'COACH' &&
             c.status === 'ISSUED'
         );
@@ -1221,8 +1362,8 @@ class SportsDataStore {
             competition_id: compId,
             certificate_no: certNo,
             recipient_type: 'COACH',
-            recipient_id: coach.id,
-            recipient_name: `${coach.prefix}${coach.first_name} ${coach.last_name}`,
+            recipient_id: school.id,
+            recipient_name: `ครูผู้ฝึกสอนโรงเรียน${school.school_name}`,
             school_id: school.id,
             school_name: school.school_name,
             event_id: eventId,
@@ -1243,7 +1384,7 @@ class SportsDataStore {
           existingCerts.push(newCert);
           createdCount++;
         }
-      });
+      }
     });
 
     localStorage.setItem(STORAGE_KEYS.CERTIFICATES, JSON.stringify(existingCerts));
@@ -1257,19 +1398,23 @@ class SportsDataStore {
     return { createdCount, skippedCount };
   }
 
-  // Batch Certificate Generator for All Completed Events
+  // Batch Certificate Generator for All Completed / Announced Events
   public generateAllBatchCertificates(): { totalCreated: number; totalSkipped: number; eventCount: number } {
-    const completedEvents = this.getEvents().filter((e) => e.status === 'COMPLETED');
+    const allResults = this.getResults();
+    const eventIdsWithResults = Array.from(new Set(allResults.map((r) => r.event_id)));
+    const targetEvents = this.getEvents().filter(
+      (e) => e.status === 'COMPLETED' || eventIdsWithResults.includes(e.id)
+    );
     let totalCreated = 0;
     let totalSkipped = 0;
 
-    completedEvents.forEach((ev) => {
+    targetEvents.forEach((ev) => {
       const res = this.generateCertificatesForEvent(ev.id);
       totalCreated += res.createdCount;
       totalSkipped += res.skippedCount;
     });
 
-    return { totalCreated, totalSkipped, eventCount: completedEvents.length };
+    return { totalCreated, totalSkipped, eventCount: targetEvents.length };
   }
 
   // Google Drive File Sync Simulator
