@@ -626,47 +626,47 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     <?php endif; ?>
 
-    <!-- SECTION GOOGLE SLIDES TEMPLATE INTEGRATION -->
+    <!-- SECTION GOOGLE APPS SCRIPT & CLOUD PDF TEMPLATE INTEGRATION -->
     <div class="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border-2 border-amber-300 rounded-3xl p-6 shadow-sm space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-200/60 pb-4">
             <div class="flex items-start gap-3.5">
                 <div class="p-3 bg-amber-600 text-white rounded-2xl shadow-sm text-xl shrink-0">
-                    📽️
+                    📜
                 </div>
                 <div>
                     <div class="flex items-center gap-2">
                         <h2 class="text-base font-bold font-kanit text-amber-950">
-                            เชื่อมโยงแม่แบบเกียรติบัตร Google นำเสนอ (Google Slides Presentation Templates)
+                            ระบบออกและพิมพ์เกียรติบัตร PDF อัตโนมัติ (Google Apps Script + Google Drive)
                         </h2>
                         <span class="px-2.5 py-0.5 bg-amber-200/80 text-amber-900 border border-amber-300 rounded-full text-[11px] font-bold">
-                            ระบบคลาวด์ 100%
+                            เชื่อมต่อระบบคลาวด์
                         </span>
                     </div>
                     <p class="text-xs text-amber-900/80 mt-1">
-                        นำ ID แม่แบบสไลด์ที่ตั้งค่าไว้มาสร้างและผูกกับเกียรติบัตรทุกฉบับในระบบ (ทั้งนักเรียนและครูผู้ฝึกสอน) รองรับการเปิดแก้ไข ส่งออก PDF และการเชื่อมต่อ Google Apps Script
+                        ระบบผสานข้อมูลผลการแข่งขันเข้ากับแม่แบบใน Google Drive ผ่าน Google Apps Script เพื่อออกและดาวน์โหลดเป็นไฟล์ PDF ได้ทันที โดยผู้ใช้งานไม่จำเป็นต้องเปิดเข้าไปใน Google นำเสนอ
                     </p>
                 </div>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 shrink-0">
-                <form method="POST" onsubmit="return confirm('⚡ ยืนยันการนำ ID จาก Google นำเสนอ มาสร้างเกียรติบัตรทุกรายการที่รอ และผูก ID แม่แบบให้กับเกียรติบัตรทั้งหมดใช่หรือไม่?')">
+                <form method="POST" onsubmit="return confirm('⚡ ยืนยันการนำ ID แม่แบบมาประมวลผลออกเกียรติบัตรทุกรายการที่รอ และผูกข้อมูลให้กับเกียรติบัตรทั้งหมดใช่หรือไม่?')">
                     <button type="submit" name="apply_google_slides_to_all" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer">
-                        <span>⚡</span> นำ ID มาสร้าง/ผูกเกียรติบัตรทั้งหมด (<?= number_format($totalCerts) ?> ฉบับ)
+                        <span>⚡</span> นำ ID แม่แบบมาออกเกียรติบัตรทั้งหมด (<?= number_format($totalCerts) ?> ฉบับ)
                     </button>
                 </form>
                 <a href="/admin/settings.php#templates" class="px-3.5 py-2.5 bg-white hover:bg-amber-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 transition flex items-center gap-1.5">
-                    <span>⚙️</span> แก้ไข ID แม่แบบ
+                    <span>⚙️</span> ตั้งค่า Google Apps Script & แม่แบบ
                 </a>
             </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <!-- Student Slide Template Card -->
+            <!-- Student Template Card -->
             <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
                 <div>
                     <div class="flex items-center justify-between">
                         <span class="text-xs font-bold text-blue-900 flex items-center gap-1.5 font-kanit">
-                            <span>🎓</span> แม่แบบนักเรียน (Student Template ID)
+                            <span>🎓</span> แม่แบบเกียรติบัตรนักเรียน (Student Template ID)
                         </span>
                         <?php if (!empty($studentSlideTpl)): ?>
                             <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
@@ -680,23 +680,19 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <?php if (!empty($studentSlideTpl)): ?>
                     <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
-                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($studentSlideTpl) ?>/edit" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>🔗</span> เปิดใน Google นำเสนอ
-                        </a>
-                        <span class="text-slate-300">&bull;</span>
                         <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($studentSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>📥</span> ส่งออก PDF
+                            <span>📥</span> ดาวน์โหลดตัวอย่าง PDF แม่แบบนักเรียน
                         </a>
                     </div>
                 <?php endif; ?>
             </div>
 
-            <!-- Coach Slide Template Card -->
+            <!-- Coach Template Card -->
             <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
                 <div>
                     <div class="flex items-center justify-between">
                         <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5 font-kanit">
-                            <span>👨‍🏫</span> แม่แบบครูผู้ฝึกสอน (Coach Template ID)
+                            <span>👨‍🏫</span> แม่แบบเกียรติบัตรครูผู้ฝึกสอน (Coach Template ID)
                         </span>
                         <?php if (!empty($coachSlideTpl)): ?>
                             <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
@@ -710,12 +706,8 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <?php if (!empty($coachSlideTpl)): ?>
                     <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
-                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($coachSlideTpl) ?>/edit" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>🔗</span> เปิดใน Google นำเสนอ
-                        </a>
-                        <span class="text-slate-300">&bull;</span>
                         <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($coachSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>📥</span> ส่งออก PDF
+                            <span>📥</span> ดาวน์โหลดตัวอย่าง PDF แม่แบบครู
                         </a>
                     </div>
                 <?php endif; ?>
@@ -999,12 +991,12 @@ require_once __DIR__ . '/../includes/header.php';
                                     <?= htmlspecialchars($c['issue_date']) ?>
                                 </td>
                                 <td class="p-3.5 pr-6 text-right space-x-1.5 whitespace-nowrap">
-                                    <?php if (!empty($c['google_slide_template_id']) || !empty($c['slide_url'])): ?>
-                                        <a href="<?= htmlspecialchars($c['slide_url'] ?: ('https://docs.google.com/presentation/d/' . $c['google_slide_template_id'] . '/edit')) ?>" target="_blank" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition" title="เปิดดูแม่แบบใน Google นำเสนอ">
-                                            📽️ สไลด์
+                                    <?php if (!empty($c['drive_url'])): ?>
+                                        <a href="<?= htmlspecialchars($c['drive_url']) ?>" target="_blank" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition" title="ดาวน์โหลดไฟล์ PDF จาก Google Drive">
+                                            📥 PDF (Drive)
                                         </a>
                                     <?php endif; ?>
-                                    <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs">
+                                    <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs" title="เปิดหน้าพิมพ์ / บันทึกเป็นไฟล์ PDF ทันที">
                                         📥 พิมพ์ / PDF
                                     </a>
                                     <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition">

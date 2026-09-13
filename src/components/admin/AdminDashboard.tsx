@@ -3044,14 +3044,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-base font-bold font-['Kanit'] text-slate-900">
-                        แม่แบบ Google นำเสนอสำหรับสร้างเกียรติบัตร (Google Slides Templates)
+                        ระบบออกเกียรติบัตรและพิมพ์ PDF อัตโนมัติ (Google Apps Script + Google Drive)
                       </h3>
-                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-full text-[11px] font-bold">
-                        เชื่อมโยง ID
+                      <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-full text-[11px] font-bold">
+                        เชื่อมโยงแม่แบบ ID
                       </span>
                     </div>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      ระบบจะนำ ID แม่แบบที่ตั้งค่าไว้ใน Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทุกฉบับโดยอัตโนมัติ
+                      นำ ID แม่แบบและข้อมูลผลการแข่งขันประมวลผลผ่าน Google Apps Script เพื่อพิมพ์และส่งออกเป็นไฟล์ PDF ทันที
                     </p>
                   </div>
                 </div>
@@ -3062,7 +3062,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                     className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
                     title="นำ ID แม่แบบที่ตั้งค่าไว้ไปผูกกับเกียรติบัตรทั้งหมดในระบบ"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" /> นำ ID มาสร้าง/ผูกเกียรติบัตรทั้งหมด ({certificates.length} ฉบับ)
+                    <RefreshCw className="w-3.5 h-3.5" /> นำ ID มาออกเกียรติบัตรทั้งหมด ({certificates.length} ฉบับ)
                   </button>
                   <button
                     onClick={() => setActiveTab('SYSTEM')}
@@ -3094,21 +3094,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                   {(comp.google_slide_template_student_id || comp.google_slide_template_id) && (
                     <div className="flex items-center gap-2 pt-1 border-t border-slate-100 text-xs">
                       <a
-                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_student_id || comp.google_slide_template_id}/edit`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-medium"
-                      >
-                        <ExternalLink className="w-3 h-3" /> เปิดใน Google นำเสนอ
-                      </a>
-                      <span className="text-slate-300">&bull;</span>
-                      <a
                         href={`https://docs.google.com/presentation/d/${comp.google_slide_template_student_id || comp.google_slide_template_id}/export/pdf`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-medium"
                       >
-                        <Download className="w-3 h-3" /> ส่งออก PDF
+                        <Download className="w-3 h-3" /> ดาวน์โหลดตัวอย่าง PDF แม่แบบนักเรียน
                       </a>
                     </div>
                   )}
@@ -3134,21 +3125,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
                   {(comp.google_slide_template_coach_id || comp.google_slide_template_id) && (
                     <div className="flex items-center gap-2 pt-1 border-t border-slate-100 text-xs">
                       <a
-                        href={`https://docs.google.com/presentation/d/${comp.google_slide_template_coach_id || comp.google_slide_template_id}/edit`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-medium"
-                      >
-                        <ExternalLink className="w-3 h-3" /> เปิดใน Google นำเสนอ
-                      </a>
-                      <span className="text-slate-300">&bull;</span>
-                      <a
                         href={`https://docs.google.com/presentation/d/${comp.google_slide_template_coach_id || comp.google_slide_template_id}/export/pdf`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-medium"
                       >
-                        <Download className="w-3 h-3" /> ส่งออก PDF
+                        <Download className="w-3 h-3" /> ดาวน์โหลดตัวอย่าง PDF แม่แบบครู
                       </a>
                     </div>
                   )}

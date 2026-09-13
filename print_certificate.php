@@ -89,17 +89,13 @@ if ($dt && $dt['year'] && $dt['month'] && $dt['day']) {
             <span class="text-xs text-slate-300 ml-3 font-medium"><?= htmlspecialchars($certificate['recipient_name']) ?></span>
         </div>
         <div class="flex items-center gap-2">
-            <?php 
-                $slideId = $certificate['google_slide_template_id'] ?? '';
-                $slideUrl = $certificate['slide_url'] ?? (!empty($slideId) ? "https://docs.google.com/presentation/d/{$slideId}/edit" : '');
-            ?>
-            <?php if (!empty($slideUrl)): ?>
-                <a href="<?= htmlspecialchars($slideUrl) ?>" target="_blank" class="px-4 py-2.5 bg-amber-700/90 hover:bg-amber-700 text-amber-100 rounded-xl text-xs md:text-sm font-semibold transition flex items-center gap-1.5 shadow-sm" title="เปิดดูแม่แบบใน Google นำเสนอ">
-                    📽️ เปิดใน Google นำเสนอ
+            <?php if (!empty($certificate['drive_url'])): ?>
+                <a href="<?= htmlspecialchars($certificate['drive_url']) ?>" target="_blank" class="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs md:text-sm font-bold shadow-md transition flex items-center gap-1.5" title="ดาวน์โหลดไฟล์ PDF ที่สร้างจาก Google Apps Script บน Google Drive">
+                    📥 ดาวน์โหลด PDF (Google Drive)
                 </a>
             <?php endif; ?>
-            <button onclick="window.print()" class="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs md:text-sm font-bold shadow-lg transition flex items-center gap-2 cursor-pointer active:scale-95">
-                📥 ดาวน์โหลด PDF / พิมพ์เกียรติบัตร
+            <button onclick="window.print()" class="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs md:text-sm font-bold shadow-lg transition flex items-center gap-2 cursor-pointer active:scale-95" title="พิมพ์ หรือ บันทึกเป็นไฟล์ PDF">
+                📥 ดาวน์โหลด PDF / สั่งพิมพ์เกียรติบัตร
             </button>
             <button onclick="window.close()" class="px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs md:text-sm font-semibold transition cursor-pointer">
                 ปิดหน้าต่าง
