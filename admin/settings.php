@@ -353,7 +353,15 @@ function createSingleCertificate(data) {
 
   // บันทึก PDF เข้าสู่โฟลเดอร์ Google Drive
   var pdfFile = targetFolder.createFile(pdfBlob);
-  pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  // บาง Google Workspace ไม่อนุญาตการแชร์แบบ “ทุกคนที่มีลิงก์”
+  // ต้องไม่ให้ข้อจำกัดนี้หยุดการตอบกลับลิงก์ PDF ไปยังเว็บไซต์
+  var sharingWarning = "";
+  try {
+    pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (sharingErr) {
+    sharingWarning = "Google Workspace ไม่อนุญาตการแชร์สาธารณะ: " + sharingErr.message;
+  }
 
   // 4. ใช้ Google Slides เป็นแม่แบบชั่วคราวเท่านั้น: หลังส่งออก PDF ให้ย้ายสำเนา Slide ไปถังขยะทันที
   //    จึงเหลือไฟล์ PDF เพียงไฟล์เดียวในโฟลเดอร์ปลายทาง
@@ -376,6 +384,7 @@ function createSingleCertificate(data) {
     file_name: finalPdfName,
     pdf_url: webViewLink,
     download_url: directDownloadLink,
+    sharing_warning: sharingWarning,
     created_at: new Date().toISOString()
   };
 }
