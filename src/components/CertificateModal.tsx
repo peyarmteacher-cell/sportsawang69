@@ -103,14 +103,60 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({ certificate,
     }
   };
 
-  const handleSyncToDrive = () => {
+  const handleSyncToDrive = async () => {
+    const endpoint = comp.google_apps_script_url?.trim();
+    const folderId = comp.google_drive_folder_id?.trim();
+    const templateId = activeSlideTemplateId?.trim();
+
+    if (!endpoint || !folderId || !templateId) {
+      setSyncSuccess(false);
+      alert('กรุณาตั้งค่า Google Apps Script URL, Google Drive Folder ID และ Google Slides Template ID ที่เมนู “เชื่อมต่อ Cloud/GAS” ก่อนออกเกียรติบัตร');
+      return;
+    }
+
     setIsSyncingDrive(true);
-    setTimeout(() => {
-      sportsStore.syncCertificateToGoogleDrive(certificate);
-      setIsSyncingDrive(false);
+    setSyncSuccess(false);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'GENERATE_CERTIFICATE',
+          folder_id: folderId,
+          template_id: templateId,
+          recipient_type: certificate.recipient_type,
+          certificate_no: certificate.certificate_no,
+          recipient_name: certificate.recipient_name,
+          school_name: certificate.school_name,
+          award: certificate.award,
+          event_name: certificate.event_name,
+          sport_name: certificate.sport_name,
+          academic_year: comp.academic_year || comp.year?.toString() || '',
+          issue_date: certificate.issue_date,
+          president_name: comp.president_name || '',
+          director_name: comp.director_name || '',
+          verify_url: `${window.location.origin}/?verify=${encodeURIComponent(certificate.qr_token)}`
+        })
+      });
+
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result || result.status !== 'SUCCESS' || !result.drive_file_id || !result.pdf_url) {
+        throw new Error(result?.message || 'Google Apps Script ไม่สามารถสร้างไฟล์ PDF ได้');
+      }
+
+      sportsStore.updateCertificate(certificate.id, {
+        drive_file_id: result.drive_file_id,
+        drive_url: result.pdf_url,
+        google_slide_template_id: templateId,
+        slide_url: `https://docs.google.com/presentation/d/${templateId}/edit`
+      });
       setSyncSuccess(true);
-      setTimeout(() => setSyncSuccess(false), 4000);
-    }, 800);
+    } catch (error) {
+      console.error('Google Drive certificate sync failed:', error);
+      alert(error instanceof Error ? error.message : 'ไม่สามารถเชื่อมต่อ Google Apps Script ได้');
+    } finally {
+      setIsSyncingDrive(false);
+    }
   };
 
   return (
