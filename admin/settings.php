@@ -355,11 +355,12 @@ function createSingleCertificate(data) {
   var pdfFile = targetFolder.createFile(pdfBlob);
   pdfFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-  // 4. ลบไฟล์ Slide ชั่วคราวทิ้ง เพื่อไม่ให้เปลืองพื้นที่ Drive
+  // 4. ใช้ Google Slides เป็นแม่แบบชั่วคราวเท่านั้น: หลังส่งออก PDF ให้ย้ายสำเนา Slide ไปถังขยะทันที
+  //    จึงเหลือไฟล์ PDF เพียงไฟล์เดียวในโฟลเดอร์ปลายทาง
   try {
-    DriveApp.getFileById(copyId).setTrashed(true);
+    copyFile.setTrashed(true);
   } catch (trashErr) {
-    // ignore
+    throw new Error("สร้าง PDF สำเร็จ แต่ไม่สามารถลบ Google Slides ชั่วคราวได้: " + trashErr.message);
   }
 
   var fileId = pdfFile.getId();
