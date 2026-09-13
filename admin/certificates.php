@@ -128,10 +128,17 @@ $coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/
  */
 function ensureGoogleDriveColumns(PDO $pdo): bool {
     try {
-        $driveFile = $pdo->query("SHOW COLUMNS FROM certificates LIKE 'drive_file_id'")->fetch();
-        $driveUrl = $pdo->query("SHOW COLUMNS FROM certificates LIKE 'drive_url'")->fetch();
-        if (!$driveFile) $pdo->exec("ALTER TABLE certificates ADD COLUMN drive_file_id VARCHAR(255) NULL");
-        if (!$driveUrl) $pdo->exec("ALTER TABLE certificates ADD COLUMN drive_url VARCHAR(500) NULL");
+        // เก็บทุกคอลัมน์ที่ต้องใช้สำหรับรับผลจาก Google Apps Script ให้ครบในครั้งเดียว
+        $requiredColumns = [
+            'google_slide_template_id' => 'VARCHAR(255) NULL',
+            'slide_url' => 'VARCHAR(500) NULL',
+            'drive_file_id' => 'VARCHAR(255) NULL',
+            'drive_url' => 'VARCHAR(500) NULL'
+        ];
+        foreach ($requiredColumns as $column => $definition) {
+            $exists = $pdo->query("SHOW COLUMNS FROM certificates LIKE '" . $column . "'")->fetch();
+            if (!$exists) $pdo->exec("ALTER TABLE certificates ADD COLUMN " . $column . " " . $definition);
+        }
         return true;
     } catch (Throwable $e) {
         return false;
@@ -585,8 +592,8 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
             $error = "ไม่พบรายการผลการแข่งขันที่บันทึกไว้ในระบบ กรุณาบันทึกผลการแข่งขันในเมนู \"ประกาศผลการแข่งขัน\" ก่อน";
         } else {
             logActivity('GENERATE_CERTS', 'CERTIFICATES', "ประมวลผลออกเกียรติบัตร: สร้างใหม่ $newCount ฉบับ (เคยมีแล้ว $skippedCount ฉบับ)");
-            if ($newCount > 0) {
-                $message = "🎉 ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ! ซิงค์ PDF ลง Google Drive สำเร็จ {$driveSync['success']} ฉบับ" . ($driveSync['failed'] > 0 ? " (ไม่สำเร็จ {$driveSync['failed']} ฉบับ: {$driveSync['message']})" : '') . " (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
+            if ($newCount > 0 || $driveSync['success'] > 0 || $driveSync['failed'] > 0) {
+                $message = "🎉 ประมวลผลเกียรติบัตร: สร้างใหม่ $newCount ฉบับ, ซิงค์ PDF ลง Google Drive สำเร็จ {$driveSync['success']} ฉบับ" . ($driveSync['failed'] > 0 ? " (ไม่สำเร็จ {$driveSync['failed']} ฉบับ: {$driveSync['message']})" : '') . " (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
             } else {
                 $message = "ℹ️ รายการนี้ได้เคยออกเกียรติบัตรไปครบถ้วนแล้วทั้งหมด ($skippedCount ฉบับ) ไม่มีรายการตกค้าง!";
             }
