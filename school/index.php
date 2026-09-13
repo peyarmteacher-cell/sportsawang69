@@ -1425,46 +1425,7 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 
     <!-- TAB 4: เกียรติบัตร (Certificates Tab) -->
-    <div id="tabContent_certs" class="tab-pane hidden space-y-6">
-        <div class="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-5">
-            <div class="flex items-center justify-between border-b border-slate-100 pb-4">
-                <div>
-                    <h3 class="font-bold font-kanit text-slate-900 text-lg flex items-center gap-2">
-                        <span>📜</span> เกียรติบัตรที่ได้รับของโรงเรียน (<?= count($certList) ?> ฉบับ)
-                    </h3>
-                    <p class="text-xs text-slate-500 mt-0.5">รวมเอกสารเกียรติบัตรรางวัล เหรียญรางวัล และใบประกาศนียบัตรเข้าร่วม</p>
-                </div>
-            </div>
-            
-            <?php if (empty($certList)): ?>
-                <div class="p-12 text-center text-slate-400 border border-dashed border-slate-200 rounded-2xl">
-                    <span class="text-3xl block mb-2">📜</span>
-                    <p>ยังไม่มีเกียรติบัตรที่ออกให้โรงเรียนนี้ เกียรติบัตรจะปรากฏหลังจากบันทึกผลการแข่งขันเสร็จสิ้น</p>
-                </div>
-            <?php else: ?>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <?php foreach ($certList as $c): ?>
-                        <div class="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-blue-300 transition flex flex-col justify-between gap-3 shadow-xs">
-                            <div>
-                                <div class="flex items-center gap-2 mb-1">
-                                    <span class="text-base">🏅</span>
-                                    <span class="font-bold text-slate-900 text-xs"><?= htmlspecialchars($c['recipient_name']) ?></span>
-                                </div>
-                                <div class="text-xs text-blue-700 font-semibold"><?= htmlspecialchars($c['award']) ?></div>
-                                <div class="text-[11px] text-slate-500 mt-0.5"><?= htmlspecialchars($c['event_name']) ?></div>
-                            </div>
-                            <div class="pt-2 border-t border-slate-100 flex items-center justify-between">
-                                <span class="text-[10px] text-slate-400 font-mono">No. <?= htmlspecialchars($c['certificate_no']) ?></span>
-                                <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-3 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-xs font-bold border border-blue-200 transition">
-                                    🔍 ดูใบจริง
-                                </a>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
+    <div id="tabContent_certs" class="tab-pane hidden space-y-6"><div class="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-sm space-y-5"><div class="border-b border-slate-100 pb-4"><h3 class="font-bold font-kanit text-slate-900 text-lg">📜 เกียรติบัตรของโรงเรียน (<?= count($certList) ?> ฉบับ)</h3><p class="text-xs text-slate-500 mt-1">ดาวน์โหลด PDF จาก Google Drive รายบุคคล หรือดาวน์โหลดรวมตามรายการแข่งขัน</p></div><?php if (empty($certList)): ?><div class="p-12 text-center text-slate-400">ยังไม่มีเกียรติบัตร</div><?php else: ?><div id="certificateGroupDownloads" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div><p class="text-[10px] text-slate-500">หากเบราว์เซอร์ถาม ให้อนุญาตการดาวน์โหลดหลายไฟล์ เพื่อรับเกียรติบัตรทั้งนักกีฬาและครูในครั้งเดียว</p><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"><?php foreach ($certList as $c): ?><div class="cert-card p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3" data-event="<?= htmlspecialchars($c['event_id'] ?? '', ENT_QUOTES) ?>" data-event-name="<?= htmlspecialchars($c['event_name'] ?? 'รายการแข่งขัน', ENT_QUOTES) ?>" data-drive-url="<?= htmlspecialchars($c['drive_url'] ?? '', ENT_QUOTES) ?>"><div><b class="text-sm text-slate-900"><?= htmlspecialchars($c['recipient_name']) ?></b><span class="ml-2 text-[10px] text-slate-500"><?= ($c['recipient_type'] ?? '') === 'COACH' ? 'ครูผู้ฝึกสอน' : 'นักเรียน' ?></span><div class="text-xs text-blue-700 mt-1"><?= htmlspecialchars($c['event_name']) ?></div><div class="text-[11px] text-slate-500"><?= htmlspecialchars($c['award']) ?></div></div><div class="flex gap-2"><?php if (!empty($c['drive_url'])): ?><a href="<?= htmlspecialchars($c['drive_url']) ?>" target="_blank" rel="noopener" class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold">📥 ดาวน์โหลด PDF</a><?php else: ?><span class="px-3 py-1.5 bg-slate-200 text-slate-500 rounded-lg text-xs">รอ PDF</span><?php endif; ?><a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold">🔍 ตรวจสอบ</a></div></div><?php endforeach; ?></div><?php endif; ?></div></div>
 
     <!-- TAB 5: ข้อมูลสถานศึกษา (School Profile Tab) -->
     <div id="tabContent_profile" class="tab-pane hidden space-y-6">
@@ -2141,6 +2102,8 @@ function escapeHtml(text) {
     };
     return text.toString().replace(/[&<>"']/g, m => map[m]);
 }
+
+function downloadSchoolCertificateGroup(urls){urls.forEach((u,i)=>setTimeout(()=>{const x=document.createElement('a');x.href=u;x.target='_blank';x.rel='noopener';document.body.appendChild(x);x.click();x.remove()},i*700))}document.addEventListener('DOMContentLoaded',()=>{const groups={};document.querySelectorAll('.cert-card').forEach(c=>{const k=c.dataset.event||c.dataset.eventName;const u=c.dataset.driveUrl;if(!groups[k])groups[k]={name:c.dataset.eventName,urls:[]};if(u)groups[k].urls.push(u)});const box=document.getElementById('certificateGroupDownloads');if(box)Object.values(groups).forEach(g=>{if(!g.urls.length)return;const q=[...new Set(g.urls)];const btn=document.createElement('button');btn.type='button';btn.className='p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-left text-xs font-bold text-emerald-800';btn.textContent='📦 ดาวน์โหลดรวม '+g.name+' ('+q.length+' PDF)';btn.onclick=()=>downloadSchoolCertificateGroup(q);box.appendChild(btn)})});
 </script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
