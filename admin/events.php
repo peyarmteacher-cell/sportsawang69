@@ -69,11 +69,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_event'])) {
     $minPlayers = intval($_POST['min_players'] ?? 1);
     $eventId = trim($_POST['event_id'] ?? '');
 
-    // ดึงชื่อกีฬา
-    $spStmt = $pdo->prepare("SELECT sport_name FROM sports WHERE id = ?");
+    // ดึงชนิดกีฬาและหมวดหมู่จากฐานข้อมูลเสมอ เพื่อป้องกันชื่อรายการไม่ตรงกับกีฬาที่เลือก
+    $spStmt = $pdo->prepare("SELECT sport_name, category FROM sports WHERE id = ?");
     $spStmt->execute([$sportId]);
     $spRow = $spStmt->fetch();
     $sportName = $spRow['sport_name'] ?? 'กีฬา';
+    $sportCategory = $spRow['category'] ?? '';
+    $isAthletics = $sportCategory === 'ATHLETICS' || isAthleticsSport($sportName);
+
+    // รายการย่อย เช่น วิ่ง 60 เมตร ใช้ได้เฉพาะกรีฑาเท่านั้น
+    // กีฬาประเภทอื่นต้องใช้ชื่อชนิดกีฬาที่เลือกเสมอ
+    if (!$isAthletics) {
+        $athleticsItem = '';
+    }
 
     // สร้างชื่อรายการแบบมาตรฐานอัตโนมัติ ไม่ต้องพิมพ์เอง
     $eventName = formatEventDisplay($sportName, $grade, $athleticsItem, $gender);
@@ -108,10 +116,57 @@ if (isset($_GET['delete_event_id'])) {
 }
 
 // -------------------------------------------------------------
+// แก้ไขข้อมูลเดิมที่เกิดจากการใช้ชื่อรายการกรีฑากับกีฬาชนิดอื่น
+// -------------------------------------------------------------
+function repairMismatchedEventNames(PDO $pdo): int {
+    $rows = $pdo->query("SELECT e.id, e.event_name, e.grade, e.gender, s.sport_name, s.category FROM events e JOIN sports s ON e.sport_id = s.id")->fetchAll();
+    $sportNames = $pdo->query("SELECT sport_name FROM sports")->fetchAll(PDO::FETCH_COLUMN);
+    $update = $pdo->prepare("UPDATE events SET event_name = ? WHERE id = ?");
+    $fixed = 0;
+
+    foreach ($rows as $row) {
+        $sportName = trim($row['sport_name'] ?? '');
+        $eventName = trim($row['event_name'] ?? '');
+        $isAthletics = ($row['category'] ?? '') === 'ATHLETICS' || isAthleticsSport($sportName);
+        if ($isAthletics || $sportName === '' || $eventName === '') {
+            continue;
+        }
+
+        preg_match('/^([^[]+)(.*)$/u', $eventName, $parts);
+        $baseName = trim($parts[1] ?? '');
+        $looksLikeAthletics = preg_match('/^(วิ่ง|กระโดด|ทุ่ม|ขว้าง|พุ่ง)/u', $baseName) === 1;
+        $isAnotherSport = $baseName !== $sportName && in_array($baseName, $sportNames, true);
+        if (!$looksLikeAthletics && !$isAnotherSport) {
+            continue;
+        }
+
+        $correctName = formatEventDisplay($sportName, normalizeEducationLevel($row['grade'] ?? ''), '', $row['gender'] ?? 'MALE');
+        if ($correctName !== $eventName) {
+            $update->execute([$correctName, $row['id']]);
+            $fixed++;
+        }
+    }
+    return $fixed;
+}
+
+$repairedEventCount = repairMismatchedEventNames($pdo);
+if ($repairedEventCount > 0 && !$message) {
+    $message = "ปรับชื่อรายการแข่งขันเดิมให้ตรงกับชนิดกีฬาแล้ว {$repairedEventCount} รายการ";
+}
+
+// -------------------------------------------------------------
 // ดึงข้อมูลสำหรับแสดงผล
 // -------------------------------------------------------------
 $sports = $pdo->query("SELECT * FROM sports ORDER BY sport_name ASC")->fetchAll();
 $selectedSport = $_GET['filter_sport'] ?? 'ALL';
+$selectedSportRow = null;
+foreach ($sports as $sport) {
+    if ($sport['id'] === $selectedSport) {
+        $selectedSportRow = $sport;
+        break;
+    }
+}
+$showAthleticsQuickAdd = $selectedSport === 'ALL' || ($selectedSportRow && (($selectedSportRow['category'] ?? '') === 'ATHLETICS' || isAthleticsSport($selectedSportRow['sport_name'] ?? '')));
 
 $sqlEvents = "
     SELECT e.*, s.sport_name, s.sport_icon,
@@ -203,7 +258,8 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
             </div>
             <div class="flex flex-wrap items-center gap-1.5">
-                <span class="text-[11px] font-bold text-slate-600 mr-1">เพิ่มด่วน:</span>
+                <?php if ($showAthleticsQuickAdd): ?>
+                <span class="text-[11px] font-bold text-slate-600 mr-1">เพิ่มรายการกรีฑาด่วน:</span>
                 <button type="button" onclick="quickAddAthletics('วิ่ง 60 เมตร', '<?= STANDARD_LEVEL_KINDERGARTEN ?>', 'MALE', 'ATH-M-60M-K')" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 rounded-lg text-xs font-semibold shadow-xs cursor-pointer">
                     + วิ่ง 60ม. ชาย (อนุบาล)
                 </button>
@@ -216,6 +272,9 @@ require_once __DIR__ . '/../includes/header.php';
                 <button type="button" onclick="quickAddAthletics('วิ่ง 80 เมตร', '<?= STANDARD_LEVEL_PRIMARY ?>', 'FEMALE', 'ATH-F-80M-P')" class="px-2.5 py-1 bg-pink-50 hover:bg-pink-100 text-pink-700 border border-pink-300 rounded-lg text-xs font-semibold shadow-xs cursor-pointer">
                     + วิ่ง 80ม. หญิง (ประถม)
                 </button>
+                <?php else: ?>
+                <span class="text-[11px] text-slate-500">เลือก "เพิ่มรายการแข่งขัน" เพื่อสร้างรายการของ <?= htmlspecialchars($selectedSportRow['sport_name'] ?? 'กีฬานี้') ?> โดยตรง</span>
+                <?php endif; ?>
             </div>
         </div>
 
