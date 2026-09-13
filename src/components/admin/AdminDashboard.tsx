@@ -1348,36 +1348,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
               )}
             </div>
 
-            {/* Google Drive & Slides Settings */}
-            <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-3">
-              <div className="flex items-center gap-2 font-bold text-blue-900">
-                <Cloud className="w-4 h-4 text-blue-600" />
-                การเชื่อมต่อ Google Drive & Google Slides (Auto Certificate & Cloud Storage)
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold block mb-1 text-slate-700">Google Drive Folder ID</label>
-                  <input
-                    type="text"
-                    value={compForm.google_drive_folder_id || ''}
-                    onChange={(e) => setCompForm({ ...compForm, google_drive_folder_id: e.target.value })}
-                    placeholder="เช่น 1A2B3C4D5E6F7G8H9I0J"
-                    className="w-full p-2.5 border rounded-xl text-sm bg-white font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="font-semibold block mb-1 text-slate-700">Google Slide Template ID</label>
-                  <input
-                    type="text"
-                    value={compForm.google_slide_template_id || ''}
-                    onChange={(e) => setCompForm({ ...compForm, google_slide_template_id: e.target.value })}
-                    placeholder="เช่น 1X2Y3Z_Template_Slide_ID"
-                    className="w-full p-2.5 border rounded-xl text-sm bg-white font-mono"
-                  />
-                </div>
-              </div>
-            </div>
-
             {/* Certificate Signatories */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
               <div>
