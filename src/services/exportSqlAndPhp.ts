@@ -1549,7 +1549,11 @@ ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`grade\` VARCHAR(100) DEFAULT '
 ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`age_group\` VARCHAR(100) DEFAULT 'อายุไม่เกิน 12 ปี';
 ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`award_type\` VARCHAR(255) DEFAULT 'เหรียญรางวัล ทอง เงิน ทองแดง + เกียรติบัตร';
 
--- 5. ซิงค์ค่าการแข่งขันล่าสุด
+-- 5. อัปเดตคอลัมน์ในตาราง certificates (รองรับ Google Slides Template)
+ALTER TABLE \`certificates\` ADD COLUMN IF NOT EXISTS \`google_slide_template_id\` VARCHAR(255) DEFAULT NULL;
+ALTER TABLE \`certificates\` ADD COLUMN IF NOT EXISTS \`slide_url\` VARCHAR(500) DEFAULT NULL;
+
+-- 6. ซิงค์ค่าการแข่งขันล่าสุด
 UPDATE \`competitions\` SET 
   \`competition_name\` = '${comp.competition_name.replace(/'/g, "\\'")}',
   \`academic_year\` = '${(comp.academic_year || '2569').replace(/'/g, "\\'")}',
@@ -1625,6 +1629,8 @@ try {
         "ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`grade\` VARCHAR(100) DEFAULT 'ประถมศึกษา'",
         "ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`age_group\` VARCHAR(100) DEFAULT 'อายุไม่เกิน 12 ปี'",
         "ALTER TABLE \`events\` ADD COLUMN IF NOT EXISTS \`award_type\` VARCHAR(255) DEFAULT 'เหรียญรางวัล ทอง เงิน ทองแดง + เกียรติบัตร'",
+        "ALTER TABLE \`certificates\` ADD COLUMN IF NOT EXISTS \`google_slide_template_id\` VARCHAR(255) DEFAULT NULL",
+        "ALTER TABLE \`certificates\` ADD COLUMN IF NOT EXISTS \`slide_url\` VARCHAR(500) DEFAULT NULL",
         "CREATE TABLE IF NOT EXISTS \`activity_logs\` (
           \`id\` VARCHAR(50) NOT NULL,
           \`user_id\` VARCHAR(50) DEFAULT NULL,

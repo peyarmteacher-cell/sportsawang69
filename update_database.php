@@ -63,6 +63,8 @@ try {
         ['events', 'max_players', "INT DEFAULT 12"],
         ['events', 'min_players', "INT DEFAULT 1"],
         
+        ['certificates', 'google_slide_template_id', "VARCHAR(255) DEFAULT NULL COMMENT 'ID สไลด์เทมเพลตสำหรับออกเกียรติบัตร'"],
+        ['certificates', 'slide_url', "VARCHAR(500) DEFAULT NULL COMMENT 'ลิงก์สไลด์ต้นฉบับ'"],
         ['certificates', 'drive_file_id', "VARCHAR(255) DEFAULT NULL"],
         ['certificates', 'drive_url', "TEXT DEFAULT NULL"],
         ['certificates', 'qr_token', "VARCHAR(100) DEFAULT NULL"],

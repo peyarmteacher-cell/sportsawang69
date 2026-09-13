@@ -15,8 +15,36 @@ $user = getCurrentUser();
 $message = '';
 $error = '';
 
+// ตรวจสอบและอัปเดตคอลัมน์ google_slide_template_id และ slide_url ในตาราง certificates อย่างแม่นยำ
+$hasSlideCols = false;
+try {
+    // 1. ตรวจสอบว่ามีคอลัมน์อยู่แล้วหรือไม่
+    $colCheck = $pdo->query("SHOW COLUMNS FROM `certificates` LIKE 'google_slide_template_id'")->fetch();
+    if (!empty($colCheck)) {
+        $hasSlideCols = true;
+    } else {
+        // 2. ถ้ายังไม่มี ให้ลอง ALTER TABLE เพิ่มคอลัมน์
+        try {
+            @$pdo->exec("ALTER TABLE `certificates` ADD COLUMN `google_slide_template_id` VARCHAR(255) NULL AFTER `template_type`");
+            @$pdo->exec("ALTER TABLE `certificates` ADD COLUMN `slide_url` VARCHAR(500) NULL AFTER `google_slide_template_id`");
+        } catch (Throwable $eIgnore) {
+            // โฮสติ้งอาจจำกัดสิทธิ์ ALTER TABLE ในช่วงรันสคริปต์ปกติ
+        }
+
+        // 3. ตรวจสอบซ้ำอีกครั้งว่าคอลัมน์ถูกสร้างขึ้นจริงหรือไม่
+        $colCheckAgain = $pdo->query("SHOW COLUMNS FROM `certificates` LIKE 'google_slide_template_id'")->fetch();
+        $hasSlideCols = !empty($colCheckAgain);
+    }
+} catch (Throwable $e) {
+    $hasSlideCols = false;
+}
+
 $comp = $pdo->query("SELECT * FROM competitions LIMIT 1")->fetch();
 $compId = $comp['id'] ?? 'comp-2026';
+$studentSlideTpl = $comp['google_slide_template_student_id'] ?? $comp['google_slide_template_id'] ?? '';
+$coachSlideTpl = $comp['google_slide_template_coach_id'] ?? $comp['google_slide_template_id'] ?? '';
+$studentSlideUrl = !empty($studentSlideTpl) ? "https://docs.google.com/presentation/d/{$studentSlideTpl}/edit" : null;
+$coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/d/{$coachSlideTpl}/edit" : null;
 
 // -------------------------------------------------------------
 // 1. บันทึก / ประกาศผลการแข่งขัน (Save & Announce Results)
@@ -93,18 +121,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_result'])) {
                             $certId = 'cert-' . uniqid();
                             $fullName = $st['prefix'] . $st['first_name'] . ' ' . $st['last_name'];
 
-                            $cStmt = $pdo->prepare("
-                                INSERT INTO certificates (
-                                    id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                    school_id, school_name, event_id, event_name, sport_name, result_id,
-                                    award, medal, issue_date, template_type, qr_token, status
-                                ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'GENERATED')
-                            ");
-                            $cStmt->execute([
-                                $certId, $compId, $certNo, $st['id'], $fullName,
-                                $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
-                                $resId, $aw['award'], $aw['medal'], $qrToken
-                            ]);
+                            $inserted = false;
+                            if ($hasSlideCols) {
+                                try {
+                                    $cStmt = $pdo->prepare("
+                                        INSERT INTO certificates (
+                                            id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                            school_id, school_name, event_id, event_name, sport_name, result_id,
+                                            award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                                        ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, ?, ?, 'GENERATED')
+                                    ");
+                                    $success = $cStmt->execute([
+                                        $certId, $compId, $certNo, $st['id'], $fullName,
+                                        $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
+                                        $resId, $aw['award'], $aw['medal'], $studentSlideTpl, $studentSlideUrl, $qrToken
+                                    ]);
+                                    if ($success) $inserted = true;
+                                } catch (Throwable $eCert) {
+                                    if (strpos($eCert->getMessage(), '42S22') !== false || strpos($eCert->getMessage(), '1054') !== false) {
+                                        $hasSlideCols = false;
+                                    } else {
+                                        throw $eCert;
+                                    }
+                                }
+                            }
+                            if (!$inserted) {
+                                $cStmt = $pdo->prepare("
+                                    INSERT INTO certificates (
+                                        id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                        school_id, school_name, event_id, event_name, sport_name, result_id,
+                                        award, medal, issue_date, template_type, qr_token, status
+                                    ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, 'GENERATED')
+                                ");
+                                $cStmt->execute([
+                                    $certId, $compId, $certNo, $st['id'], $fullName,
+                                    $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
+                                    $resId, $aw['award'], $aw['medal'], $qrToken
+                                ]);
+                            }
                         }
 
                         // 2. เกียรติบัตรครูผู้ฝึกสอนทุกคน (Template: COACH)
@@ -137,18 +191,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_result'])) {
                                 $certId = 'cert-' . uniqid();
                                 $coachFullName = $coach['prefix'] . $coach['first_name'] . ' ' . $coach['last_name'];
 
-                                $cStmt = $pdo->prepare("
-                                    INSERT INTO certificates (
-                                        id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                        school_id, school_name, event_id, event_name, sport_name, result_id,
-                                        award, medal, issue_date, template_type, qr_token, status
-                                    ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'GENERATED')
-                                ");
-                                $cStmt->execute([
-                                    $certId, $compId, $certNo, $coach['id'], $coachFullName,
-                                    $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
-                                    $resId, 'ครูผู้ฝึกสอน - ' . $aw['award'], $aw['medal'], $qrToken
-                                ]);
+                                $coachInserted = false;
+                                if ($hasSlideCols) {
+                                    try {
+                                        $cStmt = $pdo->prepare("
+                                            INSERT INTO certificates (
+                                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                                school_id, school_name, event_id, event_name, sport_name, result_id,
+                                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                                            ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, ?, ?, 'GENERATED')
+                                        ");
+                                        $success = $cStmt->execute([
+                                            $certId, $compId, $certNo, $coach['id'], $coachFullName,
+                                            $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
+                                            $resId, 'ครูผู้ฝึกสอน - ' . $aw['award'], $aw['medal'], $coachSlideTpl, $coachSlideUrl, $qrToken
+                                        ]);
+                                        if ($success) $coachInserted = true;
+                                    } catch (Throwable $eCert) {
+                                        if (strpos($eCert->getMessage(), '42S22') !== false || strpos($eCert->getMessage(), '1054') !== false) {
+                                            $hasSlideCols = false;
+                                        } else {
+                                            throw $eCert;
+                                        }
+                                    }
+                                }
+                                if (!$coachInserted) {
+                                    $cStmt = $pdo->prepare("
+                                        INSERT INTO certificates (
+                                            id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                                            school_id, school_name, event_id, event_name, sport_name, result_id,
+                                            award, medal, issue_date, template_type, qr_token, status
+                                        ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, 'GENERATED')
+                                    ");
+                                    $cStmt->execute([
+                                        $certId, $compId, $certNo, $coach['id'], $coachFullName,
+                                        $aw['school_id'], $schoolName, $eventId, $eventInfo['event_name'], $eventInfo['sport_name'],
+                                        $resId, 'ครูผู้ฝึกสอน - ' . $aw['award'], $aw['medal'], $qrToken
+                                    ]);
+                                }
                             }
                         }
                     }

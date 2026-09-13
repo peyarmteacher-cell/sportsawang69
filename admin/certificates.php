@@ -16,6 +16,105 @@ $pdo = Database::getConnection();
 $message = '';
 $error = '';
 
+// ตรวจสอบและอัปเดตคอลัมน์ google_slide_template_id และ slide_url ในตาราง certificates อย่างแม่นยำ
+$hasSlideCols = false;
+try {
+    // 1. ตรวจสอบว่ามีคอลัมน์อยู่แล้วหรือไม่
+    $colCheck = $pdo->query("SHOW COLUMNS FROM `certificates` LIKE 'google_slide_template_id'")->fetch();
+    if (!empty($colCheck)) {
+        $hasSlideCols = true;
+    } else {
+        // 2. ถ้ายังไม่มี ให้ลอง ALTER TABLE เพิ่มคอลัมน์
+        try {
+            @$pdo->exec("ALTER TABLE `certificates` ADD COLUMN `google_slide_template_id` VARCHAR(255) NULL AFTER `template_type`");
+            @$pdo->exec("ALTER TABLE `certificates` ADD COLUMN `slide_url` VARCHAR(500) NULL AFTER `google_slide_template_id`");
+        } catch (Throwable $eIgnore) {
+            // โฮสติ้งอาจจำกัดสิทธิ์ ALTER TABLE ในช่วงรันสคริปต์ปกติ
+        }
+
+        // 3. ตรวจสอบซ้ำอีกครั้งว่าคอลัมน์ถูกสร้างขึ้นจริงหรือไม่ (ห้ามเดาว่าสำเร็จ)
+        $colCheckAgain = $pdo->query("SHOW COLUMNS FROM `certificates` LIKE 'google_slide_template_id'")->fetch();
+        $hasSlideCols = !empty($colCheckAgain);
+    }
+} catch (Throwable $e) {
+    $hasSlideCols = false;
+}
+
+/**
+ * ฟังก์ชันช่วยบันทึกข้อมูลเกียรติบัตรอย่างปลอดภัยสูงสุด 
+ * (มี Auto-Fallback: หากฐานข้อมูลยังไม่มีคอลัมน์ google_slide_template_id ระบบจะสลับไปบันทึกแบบมาตรฐานทันทีโดยไม่เกิด Error)
+ */
+function insertCertificateRecord(
+    PDO $pdo,
+    bool &$hasSlideCols,
+    string $id,
+    string $compId,
+    string $certNo,
+    string $recipientType,
+    string $recipientId,
+    string $recipientName,
+    string $schoolId,
+    string $schoolName,
+    string $eventId,
+    string $eventName,
+    string $sportName,
+    string $resultId,
+    string $award,
+    string $medal,
+    string $templateType,
+    ?string $slideTpl,
+    ?string $slideUrl,
+    string $qrToken,
+    string $status = 'ISSUED'
+) {
+    if ($hasSlideCols) {
+        try {
+            $ins = $pdo->prepare("
+                INSERT INTO certificates (
+                    id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+                    school_id, school_name, event_id, event_name, sport_name, result_id,
+                    award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?)
+            ");
+            $success = $ins->execute([
+                $id, $compId, $certNo, $recipientType, $recipientId, $recipientName,
+                $schoolId, $schoolName, $eventId, $eventName, $sportName, $resultId,
+                $award, $medal, $templateType, $slideTpl, $slideUrl, $qrToken, $status
+            ]);
+            if ($success) {
+                return true;
+            }
+            // หาก execute ล้มเหลวและเกิดจากคอลัมน์ไม่มี
+            $errInfo = $ins->errorInfo();
+            if (isset($errInfo[1]) && ($errInfo[1] == 1054 || strpos($errInfo[2] ?? '', 'google_slide_template_id') !== false)) {
+                $hasSlideCols = false;
+            }
+        } catch (Throwable $e) {
+            $err = $e->getMessage();
+            if (strpos($err, '42S22') !== false || strpos($err, '1054') !== false || strpos($err, 'google_slide_template_id') !== false) {
+                // หากไม่มีคอลัมน์ google_slide_template_id ให้ปิด flag ทันที แล้วข้ามไปรันคำสั่งมาตรฐานด้านล่าง
+                $hasSlideCols = false;
+            } else {
+                throw $e;
+            }
+        }
+    }
+
+    // Fallback ปลอดภัย 100%: บันทึกข้อมูลเฉพาะฟิลด์มาตรฐานที่มีอยู่ในทุกเวอร์ชันของตาราง certificates
+    $ins = $pdo->prepare("
+        INSERT INTO certificates (
+            id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
+            school_id, school_name, event_id, event_name, sport_name, result_id,
+            award, medal, issue_date, template_type, qr_token, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?)
+    ");
+    return $ins->execute([
+        $id, $compId, $certNo, $recipientType, $recipientId, $recipientName,
+        $schoolId, $schoolName, $eventId, $eventName, $sportName, $resultId,
+        $award, $medal, $templateType, $qrToken, $status
+    ]);
+}
+
 $comp = $pdo->query("SELECT * FROM competitions LIMIT 1")->fetch();
 $compId = $comp['id'] ?? 'comp-2026';
 $certPrefix = $comp['cert_prefix'] ?? 'สพป.บร.3/2569-';
@@ -27,18 +126,33 @@ $coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/
 // -------------------------------------------------------------
 // 0. ผูกและนำ ID จาก Google นำเสนอมาอัปเดตเกียรติบัตรทั้งหมด
 // -------------------------------------------------------------
-if (isset($_POST['apply_google_slides_to_all'])) {
+if (isset($_POST['migrate_slide_columns'])) {
     try {
-        $upSt = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'STUDENT'");
-        $upSt->execute([$studentSlideTpl, $studentSlideUrl]);
-
-        $upCo = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'COACH'");
-        $upCo->execute([$coachSlideTpl, $coachSlideUrl]);
-
-        logActivity('APPLY_GOOGLE_SLIDES', 'CERTIFICATES', "นำ ID Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมด (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl)");
-        $message = "นำ ID จาก Google นำเสนอ (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl) มาสร้างและผูกกับเกียรติบัตรทั้งหมดเรียบร้อยแล้ว!";
+        $pdo->exec("ALTER TABLE `certificates` ADD COLUMN `google_slide_template_id` VARCHAR(255) NULL AFTER `template_type`");
+        $pdo->exec("ALTER TABLE `certificates` ADD COLUMN `slide_url` VARCHAR(500) NULL AFTER `google_slide_template_id`");
+        $hasSlideCols = true;
+        $message = "เพิ่มคอลัมน์ google_slide_template_id และ slide_url ในตาราง certificates สำเร็จแล้ว!";
     } catch (Exception $e) {
-        $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
+        $error = "ไม่สามารถรันคำสั่งแก้ไขตารางอัตโนมัติได้: " . $e->getMessage() . " (กรุณารันคำสั่ง SQL ผ่าน phpMyAdmin หรือเปิดไฟล์ update_database.php)";
+    }
+}
+
+if (isset($_POST['apply_google_slides_to_all'])) {
+    if (!$hasSlideCols) {
+        $error = "ฐานข้อมูลยังไม่มีคอลัมน์ google_slide_template_id (กรุณารันไฟล์ update_database.php หรือเพิ่มคอลัมน์ใน phpMyAdmin ด้วยคำสั่ง: ALTER TABLE `certificates` ADD `google_slide_template_id` VARCHAR(255) NULL; ALTER TABLE `certificates` ADD `slide_url` VARCHAR(500) NULL;)";
+    } else {
+        try {
+            $upSt = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'STUDENT'");
+            $upSt->execute([$studentSlideTpl, $studentSlideUrl]);
+
+            $upCo = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'COACH'");
+            $upCo->execute([$coachSlideTpl, $coachSlideUrl]);
+
+            logActivity('APPLY_GOOGLE_SLIDES', 'CERTIFICATES', "นำ ID Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมด (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl)");
+            $message = "นำ ID จาก Google นำเสนอ (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl) มาสร้างและผูกกับเกียรติบัตรทั้งหมดเรียบร้อยแล้ว!";
+        } catch (Exception $e) {
+            $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
+        }
     }
 }
 
@@ -204,18 +318,12 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                         $qrToken = bin2hex(random_bytes(16));
                         $newId = 'cert-' . uniqid();
 
-                        $ins = $pdo->prepare("
-                            INSERT INTO certificates (
-                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
-                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, ?, ?, 'ISSUED')
-                        ");
-                        $ins->execute([
-                            $newId, $compId, $certNo, $st['id'], $fullName,
+                        insertCertificateRecord(
+                            $pdo, $hasSlideCols,
+                            $newId, $compId, $certNo, 'STUDENT', $st['id'], $fullName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, $studentSlideTpl, $studentSlideUrl, $qrToken
-                        ]);
+                            $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
+                        );
                         $newCount++;
                     }
                 } else {
@@ -229,18 +337,12 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                         $newId = 'cert-' . uniqid();
                         $teamName = 'ตัวแทนนักกีฬาโรงเรียน' . $schName;
 
-                        $ins = $pdo->prepare("
-                            INSERT INTO certificates (
-                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
-                            ) VALUES (?, ?, ?, 'STUDENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'STUDENT', ?, ?, ?, 'ISSUED')
-                        ");
-                        $ins->execute([
-                            $newId, $compId, $certNo, $schId, $teamName,
+                        insertCertificateRecord(
+                            $pdo, $hasSlideCols,
+                            $newId, $compId, $certNo, 'STUDENT', $schId, $teamName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, $studentSlideTpl, $studentSlideUrl, $qrToken
-                        ]);
+                            $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
+                        );
                         $newCount++;
                     } else {
                         $skippedCount++;
@@ -299,18 +401,12 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                             $qrToken = bin2hex(random_bytes(16));
                             $newId = 'cert-' . uniqid();
 
-                            $ins = $pdo->prepare("
-                                INSERT INTO certificates (
-                                    id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                    school_id, school_name, event_id, event_name, sport_name, result_id,
-                                    award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
-                                ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, ?, ?, 'ISSUED')
-                            ");
-                            $ins->execute([
-                                $newId, $compId, $certNo, $coach['id'], $coachName,
+                            insertCertificateRecord(
+                                $pdo, $hasSlideCols,
+                                $newId, $compId, $certNo, 'COACH', $coach['id'], $coachName,
                                 $schId, $schName, $evId, $evName, $spName,
-                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $coachSlideTpl, $coachSlideUrl, $qrToken
-                            ]);
+                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
+                            );
                             $newCount++;
                         }
                     }
@@ -325,18 +421,12 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
                         $newId = 'cert-' . uniqid();
                         $coachSchoolName = 'ครูผู้ฝึกสอนโรงเรียน' . $schName;
 
-                        $ins = $pdo->prepare("
-                            INSERT INTO certificates (
-                                id, competition_id, certificate_no, recipient_type, recipient_id, recipient_name,
-                                school_id, school_name, event_id, event_name, sport_name, result_id,
-                                award, medal, issue_date, template_type, google_slide_template_id, slide_url, qr_token, status
-                            ) VALUES (?, ?, ?, 'COACH', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'COACH', ?, ?, ?, 'ISSUED')
-                        ");
-                        $ins->execute([
-                            $newId, $compId, $certNo, $schId, $coachSchoolName,
+                        insertCertificateRecord(
+                            $pdo, $hasSlideCols,
+                            $newId, $compId, $certNo, 'COACH', $schId, $coachSchoolName,
                             $schId, $schName, $evId, $evName, $spName,
-                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, $coachSlideTpl, $coachSlideUrl, $qrToken
-                        ]);
+                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
+                        );
                         $newCount++;
                     } else {
                         $skippedCount++;
@@ -477,6 +567,25 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="p-4 bg-rose-50 border border-rose-300 text-rose-900 text-xs rounded-2xl flex items-center gap-3 shadow-sm">
             <span class="text-lg">❌</span>
             <div class="font-medium"><?= htmlspecialchars($error) ?></div>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!$hasSlideCols): ?>
+        <div class="p-4 bg-amber-50 border border-amber-300 text-amber-900 text-xs rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
+            <div class="flex items-start gap-2.5">
+                <span class="text-xl">💡</span>
+                <div>
+                    <span class="font-bold">ระบบเกียรติบัตรทำงานในโหมดมาตรฐาน (Safe Mode):</span>
+                    <p class="text-amber-800 text-[11px] mt-0.5">
+                        ตาราง <code class="bg-amber-200/60 px-1 py-0.5 rounded font-mono">certificates</code> ใน MySQL ยังไม่มีคอลัมน์ <code class="bg-amber-200/60 px-1 py-0.5 rounded font-mono">google_slide_template_id</code> ระบบจึงออกเกียรติบัตรด้วยฟิลด์มาตรฐานโดยไม่เกิดข้อผิดพลาด คุณสามารถคลิกปุ่มด้านขวาเพื่อเพิ่มคอลัมน์อัตโนมัติ หรือรันผ่าน phpMyAdmin: <code class="bg-white/80 px-1.5 py-0.5 rounded border border-amber-200 font-mono text-[10px] select-all">ALTER TABLE `certificates` ADD `google_slide_template_id` VARCHAR(255) NULL, ADD `slide_url` VARCHAR(500) NULL;</code>
+                    </p>
+                </div>
+            </div>
+            <form method="POST" class="shrink-0">
+                <button type="submit" name="migrate_slide_columns" class="px-3.5 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer">
+                    <span>⚡</span> เพิ่มคอลัมน์ใน MySQL ตอนนี้
+                </button>
+            </form>
         </div>
     <?php endif; ?>
 
