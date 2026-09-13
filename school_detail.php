@@ -34,7 +34,7 @@ $statStmt = $pdo->prepare("
          COALESCE(SUM(CASE WHEN r.medal = 'BRONZE' THEN 1 ELSE 0 END), 0) * 1) AS total_points,
         COUNT(r.id) AS total_awards
     FROM results r
-    WHERE r.school_id = ? AND r.status = 'OFFICIAL'
+    WHERE r.school_id = ? AND r.status = 'OFFICIAL' AND r.status = 'OFFICIAL'
 ");
 $statStmt->execute([$schoolId]);
 $stats = $statStmt->fetch();
