@@ -321,12 +321,17 @@ class SportsDataStore {
     return enriched.filter((c) => !c.competition_id || isMatchingCompId(c.competition_id, compId));
   }
 
-  // Apply Google Slide Template IDs configured in settings to ALL existing certificates in the system
-  public applyGoogleSlideTemplatesToAllCertificates(): { updatedCount: number; studentTpl: string; coachTpl: string } {
+  // Apply Google Slide Template IDs configured in settings to ALL certificates (create pending & update all existing)
+  public applyGoogleSlideTemplatesToAllCertificates(): { createdCount: number; updatedCount: number; totalCount: number; studentTpl: string; coachTpl: string } {
     const comp = this.getCurrentCompetition();
     const studentTpl = comp.google_slide_template_student_id || comp.google_slide_template_id || '';
     const coachTpl = comp.google_slide_template_coach_id || comp.google_slide_template_id || '';
 
+    // 1. First generate certificates for any pending results that don't have certificates yet
+    const batchRes = this.generateAllBatchCertificates();
+    const createdCount = batchRes.totalCreated;
+
+    // 2. Fetch all certificates and bind active Google Slide Template IDs
     const list: Certificate[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.CERTIFICATES) || '[]');
     let updatedCount = 0;
 
@@ -348,10 +353,10 @@ class SportsDataStore {
       'APPLY_GOOGLE_SLIDES',
       'certificates',
       comp.id,
-      `นำ ID จาก Google นำเสนอ (นักเรียน: ${studentTpl || '-'}, ครู: ${coachTpl || '-'}) มาสร้างและผูกกับเกียรติบัตรทั้งหมด ${updatedCount} ฉบับ`
+      `นำ ID จาก Google นำเสนอ (นักเรียน: ${studentTpl || '-'}, ครู: ${coachTpl || '-'}) มาสร้างและผูกกับเกียรติบัตรทั้งหมด ${updated.length} ฉบับ (สร้างใหม่ ${createdCount} ฉบับ)`
     );
     this.notify();
-    return { updatedCount, studentTpl, coachTpl };
+    return { createdCount, updatedCount, totalCount: updated.length, studentTpl, coachTpl };
   }
 
   public updateCertificate(id: string, updates: Partial<Certificate>) {

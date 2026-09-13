@@ -89,6 +89,15 @@ if ($dt && $dt['year'] && $dt['month'] && $dt['day']) {
             <span class="text-xs text-slate-300 ml-3 font-medium"><?= htmlspecialchars($certificate['recipient_name']) ?></span>
         </div>
         <div class="flex items-center gap-2">
+            <?php 
+                $slideId = $certificate['google_slide_template_id'] ?? '';
+                $slideUrl = $certificate['slide_url'] ?? (!empty($slideId) ? "https://docs.google.com/presentation/d/{$slideId}/edit" : '');
+            ?>
+            <?php if (!empty($slideUrl)): ?>
+                <a href="<?= htmlspecialchars($slideUrl) ?>" target="_blank" class="px-4 py-2.5 bg-amber-700/90 hover:bg-amber-700 text-amber-100 rounded-xl text-xs md:text-sm font-semibold transition flex items-center gap-1.5 shadow-sm" title="เปิดดูแม่แบบใน Google นำเสนอ">
+                    📽️ เปิดใน Google นำเสนอ
+                </a>
+            <?php endif; ?>
             <button onclick="window.print()" class="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs md:text-sm font-bold shadow-lg transition flex items-center gap-2 cursor-pointer active:scale-95">
                 📥 ดาวน์โหลด PDF / พิมพ์เกียรติบัตร
             </button>

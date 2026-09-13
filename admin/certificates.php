@@ -123,8 +123,223 @@ $coachSlideTpl = $comp['google_slide_template_coach_id'] ?? $comp['google_slide_
 $studentSlideUrl = !empty($studentSlideTpl) ? "https://docs.google.com/presentation/d/{$studentSlideTpl}/edit" : null;
 $coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/d/{$coachSlideTpl}/edit" : null;
 
+/**
+ * ฟังก์ชันช่วยออกเกียรติบัตรแบบกลุ่มจากผลการแข่งขัน
+ */
+function batchGenerateCertificatesHelper(
+    PDO $pdo,
+    bool &$hasSlideCols,
+    string $compId,
+    string $certPrefix,
+    ?string $studentSlideTpl,
+    ?string $studentSlideUrl,
+    ?string $coachSlideTpl,
+    ?string $coachSlideUrl,
+    ?string $targetEventId = null
+): array {
+    $whereSql = "WHERE 1=1";
+    $queryParams = [];
+    if ($targetEventId) {
+        $whereSql .= " AND r.event_id = ?";
+        $queryParams[] = $targetEventId;
+    }
+
+    $query = "
+        SELECT r.*, e.event_name, sp.sport_name, sch.school_name, sch.school_code
+        FROM results r
+        JOIN events e ON r.event_id = e.id
+        JOIN sports sp ON e.sport_id = sp.id
+        JOIN schools sch ON r.school_id = sch.id
+        $whereSql
+        ORDER BY e.event_code ASC, r.rank ASC
+    ";
+
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($queryParams);
+    $results = $stmt->fetchAll();
+
+    if (empty($results)) {
+        return ['newCount' => 0, 'skippedCount' => 0, 'totalResults' => 0];
+    }
+
+    $currentCount = (int)$pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+    $newCount = 0;
+    $skippedCount = 0;
+
+    foreach ($results as $res) {
+        $evId = $res['event_id'];
+        $schId = $res['school_id'];
+        $schName = $res['school_name'];
+        $evName = $res['event_name'];
+        $spName = $res['sport_name'];
+        $resId = $res['id'];
+        $award = $res['award'];
+        $medal = $res['medal'];
+
+        // ค้นหาข้อมูลการลงทะเบียนของโรงเรียนในรายการนี้
+        $regStmt = $pdo->prepare("SELECT id, coach_id, secondary_coach_id, coach_ids FROM registrations WHERE event_id = ? AND school_id = ?");
+        $regStmt->execute([$evId, $schId]);
+        $reg = $regStmt->fetch();
+
+        // --------------------------------------------------
+        // 1. ดึงรายชื่อนักเรียน
+        // --------------------------------------------------
+        $studentList = [];
+        if ($reg) {
+            $stStmt = $pdo->prepare("
+                SELECT s.* FROM students s
+                JOIN registration_students rs ON s.id = rs.student_id
+                WHERE rs.registration_id = ?
+            ");
+            $stStmt->execute([$reg['id']]);
+            $studentList = $stStmt->fetchAll();
+        }
+
+        // Fallback A: หากไม่ได้ระบุนักเรียนในใบสมัคร ให้ดึงนักเรียนของโรงเรียนนี้
+        if (empty($studentList)) {
+            $fallbackSt = $pdo->prepare("SELECT * FROM students WHERE school_id = ? LIMIT 5");
+            $fallbackSt->execute([$schId]);
+            $studentList = $fallbackSt->fetchAll();
+        }
+
+        if (!empty($studentList)) {
+            foreach ($studentList as $st) {
+                $fullName = trim(($st['prefix'] ?? '') . $st['first_name'] . ' ' . $st['last_name']);
+                
+                // ตรวจสอบว่าเคยออกเกียรติบัตรให้นักเรียนคนนี้ในผลนี้แล้วหรือยัง
+                $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'STUDENT'");
+                $chk->execute([$evId, $st['id']]);
+                if ($chk->fetch()) {
+                    $skippedCount++;
+                    continue;
+                }
+
+                $currentCount++;
+                $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                $qrToken = bin2hex(random_bytes(16));
+                $newId = 'cert-' . uniqid();
+
+                insertCertificateRecord(
+                    $pdo, $hasSlideCols,
+                    $newId, $compId, $certNo, 'STUDENT', $st['id'], $fullName,
+                    $schId, $schName, $evId, $evName, $spName,
+                    $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
+                );
+                $newCount++;
+            }
+        } else {
+            // Fallback B: กรณีไม่มีรายชื่อนักเรียนรายบุคคลเลย ออกเกียรติบัตรให้ทีมโรงเรียน
+            $chkTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'STUDENT'");
+            $chkTeam->execute([$evId, $schId]);
+            if (!$chkTeam->fetch()) {
+                $currentCount++;
+                $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                $qrToken = bin2hex(random_bytes(16));
+                $newId = 'cert-' . uniqid();
+                $teamName = 'ตัวแทนนักกีฬาโรงเรียน' . $schName;
+
+                insertCertificateRecord(
+                    $pdo, $hasSlideCols,
+                    $newId, $compId, $certNo, 'STUDENT', $schId, $teamName,
+                    $schId, $schName, $evId, $evName, $spName,
+                    $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
+                );
+                $newCount++;
+            } else {
+                $skippedCount++;
+            }
+        }
+
+        // --------------------------------------------------
+        // 2. ดึงรายชื่อครูผู้ฝึกสอน
+        // --------------------------------------------------
+        $targetCoachIds = [];
+        if ($reg) {
+            try {
+                $rcStmt = $pdo->prepare("SELECT coach_id FROM registration_coaches WHERE registration_id = ?");
+                $rcStmt->execute([$reg['id']]);
+                $targetCoachIds = $rcStmt->fetchAll(PDO::FETCH_COLUMN);
+            } catch (Exception $e) {
+                $targetCoachIds = [];
+            }
+
+            if (!empty($reg['coach_ids'])) {
+                $cDecoded = json_decode($reg['coach_ids'], true);
+                if (is_array($cDecoded)) {
+                    $targetCoachIds = array_merge($targetCoachIds, $cDecoded);
+                }
+            }
+            if (!empty($reg['coach_id'])) $targetCoachIds[] = $reg['coach_id'];
+            if (!empty($reg['secondary_coach_id'])) $targetCoachIds[] = $reg['secondary_coach_id'];
+        }
+
+        $targetCoachIds = array_unique(array_filter($targetCoachIds));
+
+        // Fallback A: หาโค้ชที่สังกัดโรงเรียนนี้
+        if (empty($targetCoachIds)) {
+            $cSchStmt = $pdo->prepare("SELECT id FROM coaches WHERE school_id = ? LIMIT 2");
+            $cSchStmt->execute([$schId]);
+            $targetCoachIds = $cSchStmt->fetchAll(PDO::FETCH_COLUMN);
+        }
+
+        if (!empty($targetCoachIds)) {
+            foreach ($targetCoachIds as $cId) {
+                $cStmt = $pdo->prepare("SELECT * FROM coaches WHERE id = ?");
+                $cStmt->execute([$cId]);
+                $coach = $cStmt->fetch();
+                if ($coach) {
+                    $coachName = trim(($coach['prefix'] ?? '') . $coach['first_name'] . ' ' . $coach['last_name']);
+                    
+                    $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'COACH'");
+                    $chk->execute([$evId, $coach['id']]);
+                    if ($chk->fetch()) {
+                        $skippedCount++;
+                        continue;
+                    }
+
+                    $currentCount++;
+                    $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                    $qrToken = bin2hex(random_bytes(16));
+                    $newId = 'cert-' . uniqid();
+
+                    insertCertificateRecord(
+                        $pdo, $hasSlideCols,
+                        $newId, $compId, $certNo, 'COACH', $coach['id'], $coachName,
+                        $schId, $schName, $evId, $evName, $spName,
+                        $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
+                    );
+                    $newCount++;
+                }
+            }
+        } else {
+            // Fallback B: ออกเกียรติบัตรครูผู้ฝึกสอนประจำโรงเรียน
+            $chkCoachTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'COACH'");
+            $chkCoachTeam->execute([$evId, $schId]);
+            if (!$chkCoachTeam->fetch()) {
+                $currentCount++;
+                $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
+                $qrToken = bin2hex(random_bytes(16));
+                $newId = 'cert-' . uniqid();
+                $coachSchoolName = 'ครูผู้ฝึกสอนโรงเรียน' . $schName;
+
+                insertCertificateRecord(
+                    $pdo, $hasSlideCols,
+                    $newId, $compId, $certNo, 'COACH', $schId, $coachSchoolName,
+                    $schId, $schName, $evId, $evName, $spName,
+                    $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
+                );
+                $newCount++;
+            } else {
+                $skippedCount++;
+            }
+        }
+    }
+
+    return ['newCount' => $newCount, 'skippedCount' => $skippedCount, 'totalResults' => count($results)];
+}
+
 // -------------------------------------------------------------
-// 0. ผูกและนำ ID จาก Google นำเสนอมาอัปเดตเกียรติบัตรทั้งหมด
+// 0. ผูกและนำ ID จาก Google นำเสนอมาสร้างและอัปเดตเกียรติบัตรทั้งหมด
 // -------------------------------------------------------------
 if (isset($_POST['migrate_slide_columns'])) {
     try {
@@ -138,21 +353,34 @@ if (isset($_POST['migrate_slide_columns'])) {
 }
 
 if (isset($_POST['apply_google_slides_to_all'])) {
+    // 1. ตรวจสอบและพยายามสร้างคอลัมน์อัตโนมัติหากยังไม่มี
     if (!$hasSlideCols) {
-        $error = "ฐานข้อมูลยังไม่มีคอลัมน์ google_slide_template_id (กรุณารันไฟล์ update_database.php หรือเพิ่มคอลัมน์ใน phpMyAdmin ด้วยคำสั่ง: ALTER TABLE `certificates` ADD `google_slide_template_id` VARCHAR(255) NULL; ALTER TABLE `certificates` ADD `slide_url` VARCHAR(500) NULL;)";
-    } else {
         try {
+            $pdo->exec("ALTER TABLE `certificates` ADD COLUMN `google_slide_template_id` VARCHAR(255) NULL AFTER `template_type`");
+            $pdo->exec("ALTER TABLE `certificates` ADD COLUMN `slide_url` VARCHAR(500) NULL AFTER `google_slide_template_id`");
+            $hasSlideCols = true;
+        } catch (Throwable $eIgnore) {}
+    }
+
+    try {
+        // 2. ออกเกียรติบัตรสำหรับผลการแข่งขันที่ยังรออยู่ทั้งหมดโดยอัตโนมัติ (Batch Generate Pending Results)
+        $genRes = batchGenerateCertificatesHelper($pdo, $hasSlideCols, $compId, $certPrefix, $studentSlideTpl, $studentSlideUrl, $coachSlideTpl, $coachSlideUrl);
+        $newCreated = $genRes['newCount'];
+
+        // 3. ผูก ID แม่แบบ Google Slides ปัจจุบันให้กับเกียรติบัตรทั้งหมดในระบบ
+        if ($hasSlideCols) {
             $upSt = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'STUDENT'");
             $upSt->execute([$studentSlideTpl, $studentSlideUrl]);
 
             $upCo = $pdo->prepare("UPDATE certificates SET google_slide_template_id = ?, slide_url = ? WHERE recipient_type = 'COACH'");
             $upCo->execute([$coachSlideTpl, $coachSlideUrl]);
-
-            logActivity('APPLY_GOOGLE_SLIDES', 'CERTIFICATES', "นำ ID Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมด (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl)");
-            $message = "นำ ID จาก Google นำเสนอ (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl) มาสร้างและผูกกับเกียรติบัตรทั้งหมดเรียบร้อยแล้ว!";
-        } catch (Exception $e) {
-            $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
         }
+
+        $totalAfter = (int)$pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
+        logActivity('APPLY_GOOGLE_SLIDES', 'CERTIFICATES', "นำ ID Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมด (นักเรียน: $studentSlideTpl, ครู: $coachSlideTpl, สร้างใหม่ $newCreated, รวม $totalAfter ฉบับ)");
+        $message = "🎉 ดำเนินการสำเร็จ! นำ ID จาก Google นำเสนอ (นักเรียน: " . ($studentSlideTpl ?: '-') . ", ครู: " . ($coachSlideTpl ?: '-') . ") มาสร้างและผูกกับเกียรติบัตรทั้งหมดเรียบร้อยแล้ว! (สร้างเกียรติบัตรใหม่ $newCreated ฉบับ, ผูก ID ให้เกียรติบัตรทั้งหมดรวม $totalAfter ฉบับ)";
+    } catch (Exception $e) {
+        $error = "เกิดข้อผิดพลาด: " . $e->getMessage();
     }
 }
 
@@ -236,204 +464,13 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
     $targetEventId = isset($_POST['generate_single_event']) ? trim($_POST['event_id'] ?? '') : null;
 
     try {
-        // Query results (accept both OFFICIAL, CONFIRMED, or any recorded result)
-        $whereSql = "WHERE 1=1";
-        $queryParams = [];
-        if ($targetEventId) {
-            $whereSql .= " AND r.event_id = ?";
-            $queryParams[] = $targetEventId;
-        }
+        $genRes = batchGenerateCertificatesHelper($pdo, $hasSlideCols, $compId, $certPrefix, $studentSlideTpl, $studentSlideUrl, $coachSlideTpl, $coachSlideUrl, $targetEventId);
+        $newCount = $genRes['newCount'];
+        $skippedCount = $genRes['skippedCount'];
 
-        $query = "
-            SELECT r.*, e.event_name, sp.sport_name, sch.school_name, sch.school_code
-            FROM results r
-            JOIN events e ON r.event_id = e.id
-            JOIN sports sp ON e.sport_id = sp.id
-            JOIN schools sch ON r.school_id = sch.id
-            $whereSql
-            ORDER BY e.event_code ASC, r.rank ASC
-        ";
-
-        $stmt = $pdo->prepare($query);
-        $stmt->execute($queryParams);
-        $results = $stmt->fetchAll();
-
-        if (empty($results)) {
+        if ($genRes['totalResults'] === 0) {
             $error = "ไม่พบรายการผลการแข่งขันที่บันทึกไว้ในระบบ กรุณาบันทึกผลการแข่งขันในเมนู \"ประกาศผลการแข่งขัน\" ก่อน";
         } else {
-            $currentCount = $pdo->query("SELECT COUNT(*) FROM certificates")->fetchColumn();
-            $newCount = 0;
-            $skippedCount = 0;
-
-            foreach ($results as $res) {
-                $evId = $res['event_id'];
-                $schId = $res['school_id'];
-                $schName = $res['school_name'];
-                $evName = $res['event_name'];
-                $spName = $res['sport_name'];
-                $resId = $res['id'];
-                $award = $res['award'];
-                $medal = $res['medal'];
-
-                // ค้นหาข้อมูลการลงทะเบียนของโรงเรียนในรายการนี้
-                $regStmt = $pdo->prepare("SELECT id, coach_id, secondary_coach_id, coach_ids FROM registrations WHERE event_id = ? AND school_id = ?");
-                $regStmt->execute([$evId, $schId]);
-                $reg = $regStmt->fetch();
-
-                // --------------------------------------------------
-                // 1. ดึงรายชื่อนักเรียน
-                // --------------------------------------------------
-                $studentList = [];
-                if ($reg) {
-                    $stStmt = $pdo->prepare("
-                        SELECT s.* FROM students s
-                        JOIN registration_students rs ON s.id = rs.student_id
-                        WHERE rs.registration_id = ?
-                    ");
-                    $stStmt->execute([$reg['id']]);
-                    $studentList = $stStmt->fetchAll();
-                }
-
-                // Fallback A: หากไม่ได้ระบุนักเรียนในใบสมัคร ให้ดึงนักเรียนของโรงเรียนนี้
-                if (empty($studentList)) {
-                    $fallbackSt = $pdo->prepare("SELECT * FROM students WHERE school_id = ? LIMIT 5");
-                    $fallbackSt->execute([$schId]);
-                    $studentList = $fallbackSt->fetchAll();
-                }
-
-                if (!empty($studentList)) {
-                    foreach ($studentList as $st) {
-                        $fullName = trim(($st['prefix'] ?? '') . $st['first_name'] . ' ' . $st['last_name']);
-                        
-                        // ตรวจสอบว่าเคยออกเกียรติบัตรให้นักเรียนคนนี้ในผลนี้แล้วหรือยัง
-                        $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'STUDENT'");
-                        $chk->execute([$evId, $st['id']]);
-                        if ($chk->fetch()) {
-                            $skippedCount++;
-                            continue;
-                        }
-
-                        $currentCount++;
-                        $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
-                        $qrToken = bin2hex(random_bytes(16));
-                        $newId = 'cert-' . uniqid();
-
-                        insertCertificateRecord(
-                            $pdo, $hasSlideCols,
-                            $newId, $compId, $certNo, 'STUDENT', $st['id'], $fullName,
-                            $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
-                        );
-                        $newCount++;
-                    }
-                } else {
-                    // Fallback B: กรณีไม่มีรายชื่อนักเรียนรายบุคคลเลย ออกเกียรติบัตรให้ทีมโรงเรียน
-                    $chkTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'STUDENT'");
-                    $chkTeam->execute([$evId, $schId]);
-                    if (!$chkTeam->fetch()) {
-                        $currentCount++;
-                        $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
-                        $qrToken = bin2hex(random_bytes(16));
-                        $newId = 'cert-' . uniqid();
-                        $teamName = 'ตัวแทนนักกีฬาโรงเรียน' . $schName;
-
-                        insertCertificateRecord(
-                            $pdo, $hasSlideCols,
-                            $newId, $compId, $certNo, 'STUDENT', $schId, $teamName,
-                            $schId, $schName, $evId, $evName, $spName,
-                            $resId, $award, $medal, 'STUDENT', $studentSlideTpl, $studentSlideUrl, $qrToken, 'ISSUED'
-                        );
-                        $newCount++;
-                    } else {
-                        $skippedCount++;
-                    }
-                }
-
-                // --------------------------------------------------
-                // 2. ดึงรายชื่อครูผู้ฝึกสอน
-                // --------------------------------------------------
-                $targetCoachIds = [];
-                if ($reg) {
-                    try {
-                        $rcStmt = $pdo->prepare("SELECT coach_id FROM registration_coaches WHERE registration_id = ?");
-                        $rcStmt->execute([$reg['id']]);
-                        $targetCoachIds = $rcStmt->fetchAll(PDO::FETCH_COLUMN);
-                    } catch (Exception $e) {
-                        $targetCoachIds = [];
-                    }
-
-                    if (!empty($reg['coach_ids'])) {
-                        $cDecoded = json_decode($reg['coach_ids'], true);
-                        if (is_array($cDecoded)) {
-                            $targetCoachIds = array_merge($targetCoachIds, $cDecoded);
-                        }
-                    }
-                    if (!empty($reg['coach_id'])) $targetCoachIds[] = $reg['coach_id'];
-                    if (!empty($reg['secondary_coach_id'])) $targetCoachIds[] = $reg['secondary_coach_id'];
-                }
-
-                $targetCoachIds = array_unique(array_filter($targetCoachIds));
-
-                // Fallback A: หาโค้ชที่สังกัดโรงเรียนนี้
-                if (empty($targetCoachIds)) {
-                    $cSchStmt = $pdo->prepare("SELECT id FROM coaches WHERE school_id = ? LIMIT 2");
-                    $cSchStmt->execute([$schId]);
-                    $targetCoachIds = $cSchStmt->fetchAll(PDO::FETCH_COLUMN);
-                }
-
-                if (!empty($targetCoachIds)) {
-                    foreach ($targetCoachIds as $cId) {
-                        $cStmt = $pdo->prepare("SELECT * FROM coaches WHERE id = ?");
-                        $cStmt->execute([$cId]);
-                        $coach = $cStmt->fetch();
-                        if ($coach) {
-                            $coachName = trim(($coach['prefix'] ?? '') . $coach['first_name'] . ' ' . $coach['last_name']);
-                            
-                            $chk = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND recipient_id = ? AND recipient_type = 'COACH'");
-                            $chk->execute([$evId, $coach['id']]);
-                            if ($chk->fetch()) {
-                                $skippedCount++;
-                                continue;
-                            }
-
-                            $currentCount++;
-                            $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
-                            $qrToken = bin2hex(random_bytes(16));
-                            $newId = 'cert-' . uniqid();
-
-                            insertCertificateRecord(
-                                $pdo, $hasSlideCols,
-                                $newId, $compId, $certNo, 'COACH', $coach['id'], $coachName,
-                                $schId, $schName, $evId, $evName, $spName,
-                                $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
-                            );
-                            $newCount++;
-                        }
-                    }
-                } else {
-                    // Fallback B: ออกเกียรติบัตรครูผู้ฝึกสอนประจำโรงเรียน
-                    $chkCoachTeam = $pdo->prepare("SELECT id FROM certificates WHERE event_id = ? AND school_id = ? AND recipient_type = 'COACH'");
-                    $chkCoachTeam->execute([$evId, $schId]);
-                    if (!$chkCoachTeam->fetch()) {
-                        $currentCount++;
-                        $certNo = $certPrefix . str_pad($currentCount, 5, '0', STR_PAD_LEFT);
-                        $qrToken = bin2hex(random_bytes(16));
-                        $newId = 'cert-' . uniqid();
-                        $coachSchoolName = 'ครูผู้ฝึกสอนโรงเรียน' . $schName;
-
-                        insertCertificateRecord(
-                            $pdo, $hasSlideCols,
-                            $newId, $compId, $certNo, 'COACH', $schId, $coachSchoolName,
-                            $schId, $schName, $evId, $evName, $spName,
-                            $resId, 'ครูผู้ฝึกสอน - ' . $award, $medal, 'COACH', $coachSlideTpl, $coachSlideUrl, $qrToken, 'ISSUED'
-                        );
-                        $newCount++;
-                    } else {
-                        $skippedCount++;
-                    }
-                }
-            }
-
             logActivity('GENERATE_CERTS', 'CERTIFICATES', "ประมวลผลออกเกียรติบัตร: สร้างใหม่ $newCount ฉบับ (เคยมีแล้ว $skippedCount ฉบับ)");
             if ($newCount > 0) {
                 $message = "🎉 ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ! (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
@@ -588,6 +625,103 @@ require_once __DIR__ . '/../includes/header.php';
             </form>
         </div>
     <?php endif; ?>
+
+    <!-- SECTION GOOGLE SLIDES TEMPLATE INTEGRATION -->
+    <div class="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border-2 border-amber-300 rounded-3xl p-6 shadow-sm space-y-4">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-200/60 pb-4">
+            <div class="flex items-start gap-3.5">
+                <div class="p-3 bg-amber-600 text-white rounded-2xl shadow-sm text-xl shrink-0">
+                    📽️
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-base font-bold font-kanit text-amber-950">
+                            เชื่อมโยงแม่แบบเกียรติบัตร Google นำเสนอ (Google Slides Presentation Templates)
+                        </h2>
+                        <span class="px-2.5 py-0.5 bg-amber-200/80 text-amber-900 border border-amber-300 rounded-full text-[11px] font-bold">
+                            ระบบคลาวด์ 100%
+                        </span>
+                    </div>
+                    <p class="text-xs text-amber-900/80 mt-1">
+                        นำ ID แม่แบบสไลด์ที่ตั้งค่าไว้มาสร้างและผูกกับเกียรติบัตรทุกฉบับในระบบ (ทั้งนักเรียนและครูผู้ฝึกสอน) รองรับการเปิดแก้ไข ส่งออก PDF และการเชื่อมต่อ Google Apps Script
+                    </p>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <form method="POST" onsubmit="return confirm('⚡ ยืนยันการนำ ID จาก Google นำเสนอ มาสร้างเกียรติบัตรทุกรายการที่รอ และผูก ID แม่แบบให้กับเกียรติบัตรทั้งหมดใช่หรือไม่?')">
+                    <button type="submit" name="apply_google_slides_to_all" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer">
+                        <span>⚡</span> นำ ID มาสร้าง/ผูกเกียรติบัตรทั้งหมด (<?= number_format($totalCerts) ?> ฉบับ)
+                    </button>
+                </form>
+                <a href="/admin/settings.php#templates" class="px-3.5 py-2.5 bg-white hover:bg-amber-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 transition flex items-center gap-1.5">
+                    <span>⚙️</span> แก้ไข ID แม่แบบ
+                </a>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Student Slide Template Card -->
+            <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
+                <div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-blue-900 flex items-center gap-1.5 font-kanit">
+                            <span>🎓</span> แม่แบบนักเรียน (Student Template ID)
+                        </span>
+                        <?php if (!empty($studentSlideTpl)): ?>
+                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
+                        <?php else: ?>
+                            <span class="px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
+                        <?php endif; ?>
+                    </div>
+                    <p class="font-mono text-xs text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-2 truncate select-all">
+                        <?= htmlspecialchars($studentSlideTpl ?: '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)') ?>
+                    </p>
+                </div>
+                <?php if (!empty($studentSlideTpl)): ?>
+                    <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
+                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($studentSlideTpl) ?>/edit" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-semibold">
+                            <span>🔗</span> เปิดใน Google นำเสนอ
+                        </a>
+                        <span class="text-slate-300">&bull;</span>
+                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($studentSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
+                            <span>📥</span> ส่งออก PDF
+                        </a>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Coach Slide Template Card -->
+            <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
+                <div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5 font-kanit">
+                            <span>👨‍🏫</span> แม่แบบครูผู้ฝึกสอน (Coach Template ID)
+                        </span>
+                        <?php if (!empty($coachSlideTpl)): ?>
+                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
+                        <?php else: ?>
+                            <span class="px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
+                        <?php endif; ?>
+                    </div>
+                    <p class="font-mono text-xs text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-2 truncate select-all">
+                        <?= htmlspecialchars($coachSlideTpl ?: '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)') ?>
+                    </p>
+                </div>
+                <?php if (!empty($coachSlideTpl)): ?>
+                    <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
+                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($coachSlideTpl) ?>/edit" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 text-[11px] font-semibold">
+                            <span>🔗</span> เปิดใน Google นำเสนอ
+                        </a>
+                        <span class="text-slate-300">&bull;</span>
+                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($coachSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
+                            <span>📥</span> ส่งออก PDF
+                        </a>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
 
     <!-- SECTION 1: รายการที่รอออกเกียรติบัตร (Pending Events) -->
     <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
@@ -865,6 +999,11 @@ require_once __DIR__ . '/../includes/header.php';
                                     <?= htmlspecialchars($c['issue_date']) ?>
                                 </td>
                                 <td class="p-3.5 pr-6 text-right space-x-1.5 whitespace-nowrap">
+                                    <?php if (!empty($c['google_slide_template_id']) || !empty($c['slide_url'])): ?>
+                                        <a href="<?= htmlspecialchars($c['slide_url'] ?: ('https://docs.google.com/presentation/d/' . $c['google_slide_template_id'] . '/edit')) ?>" target="_blank" class="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition" title="เปิดดูแม่แบบใน Google นำเสนอ">
+                                            📽️ สไลด์
+                                        </a>
+                                    <?php endif; ?>
                                     <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs">
                                         📥 พิมพ์ / PDF
                                     </a>

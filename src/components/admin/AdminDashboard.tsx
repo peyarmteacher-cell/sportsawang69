@@ -424,9 +424,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialTab = 'SE
   };
 
   const handleApplyGoogleSlideTemplates = () => {
-    const updatedCount = sportsStore.applyGoogleSlideTemplatesToAllCertificates();
+    const res = sportsStore.applyGoogleSlideTemplatesToAllCertificates();
     confetti({ particleCount: 100, spread: 80, origin: { y: 0.6 } });
-    showNotification(`🎉 นำ ID จาก Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมดสำเร็จ ${updatedCount} ฉบับ!`);
+    if (res.createdCount > 0) {
+      showNotification(`🎉 นำ ID จาก Google นำเสนอมาสร้างและผูกกับเกียรติบัตรทั้งหมดสำเร็จ! (สร้างใหม่ ${res.createdCount} ฉบับ, รวมทั้งหมด ${res.totalCount} ฉบับ)`);
+    } else {
+      showNotification(`🎉 นำ ID จาก Google นำเสนอ (นักเรียน: ${res.studentTpl || '-'}, ครู: ${res.coachTpl || '-'}) มาผูกกับเกียรติบัตรทั้งหมดสำเร็จ ${res.totalCount} ฉบับ!`);
+    }
   };
 
   // --- USER MANAGEMENT HANDLERS ---
