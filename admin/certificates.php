@@ -124,6 +124,107 @@ $studentSlideUrl = !empty($studentSlideTpl) ? "https://docs.google.com/presentat
 $coachSlideUrl = !empty($coachSlideTpl) ? "https://docs.google.com/presentation/d/{$coachSlideTpl}/edit" : null;
 
 /**
+ * ตรวจสอบคอลัมน์สำหรับเก็บไฟล์ PDF ที่ Google Drive สร้างขึ้น
+ */
+function ensureGoogleDriveColumns(PDO $pdo): bool {
+    try {
+        $driveFile = $pdo->query("SHOW COLUMNS FROM certificates LIKE 'drive_file_id'")->fetch();
+        $driveUrl = $pdo->query("SHOW COLUMNS FROM certificates LIKE 'drive_url'")->fetch();
+        if (!$driveFile) $pdo->exec("ALTER TABLE certificates ADD COLUMN drive_file_id VARCHAR(255) NULL");
+        if (!$driveUrl) $pdo->exec("ALTER TABLE certificates ADD COLUMN drive_url VARCHAR(500) NULL");
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/** ส่งข้อมูลเกียรติบัตรไปยัง Google Apps Script และบันทึก PDF URL ที่ตอบกลับ */
+function syncCertificateToGoogleDrive(PDO $pdo, array $certificate, array $competition): array {
+    $endpoint = trim((string)($competition['google_apps_script_url'] ?? ''));
+    $folderId = trim((string)($competition['google_drive_folder_id'] ?? ''));
+    $templateId = trim((string)($certificate['google_slide_template_id'] ?? ''));
+    if ($templateId === '') {
+        $templateId = $certificate['recipient_type'] === 'COACH'
+            ? trim((string)($competition['google_slide_template_coach_id'] ?? $competition['google_slide_template_id'] ?? ''))
+            : trim((string)($competition['google_slide_template_student_id'] ?? $competition['google_slide_template_id'] ?? ''));
+    }
+    if ($endpoint === '' || $folderId === '' || $templateId === '') {
+        return ['success' => false, 'message' => 'ยังตั้งค่า Google Apps Script, Drive Folder หรือ Google Slides Template ไม่ครบ'];
+    }
+    if (!function_exists('curl_init')) {
+        return ['success' => false, 'message' => 'เซิร์ฟเวอร์ PHP ยังไม่ได้เปิดใช้งาน cURL'];
+    }
+
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $verifyUrl = $host !== '' ? $scheme . '://' . $host . '/verify.php?token=' . rawurlencode((string)$certificate['qr_token']) : '';
+    $payload = [
+        'action' => 'GENERATE_CERTIFICATE',
+        'folder_id' => $folderId,
+        'template_id' => $templateId,
+        'recipient_type' => $certificate['recipient_type'],
+        'certificate_no' => $certificate['certificate_no'],
+        'recipient_name' => $certificate['recipient_name'],
+        'school_name' => $certificate['school_name'],
+        'award' => $certificate['award'],
+        'event_name' => $certificate['event_name'],
+        'sport_name' => $certificate['sport_name'],
+        'academic_year' => $competition['academic_year'] ?? $competition['year'] ?? '',
+        'issue_date' => $certificate['issue_date'],
+        'president_name' => $competition['president_name'] ?? '',
+        'director_name' => $competition['director_name'] ?? '',
+        'verify_url' => $verifyUrl
+    ];
+
+    $curl = curl_init($endpoint);
+    curl_setopt_array($curl, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_UNICODE),
+        CURLOPT_HTTPHEADER => ['Content-Type: text/plain; charset=utf-8'],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 60
+    ]);
+    $raw = curl_exec($curl);
+    $httpCode = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($curl);
+    curl_close($curl);
+    $result = is_string($raw) ? json_decode($raw, true) : null;
+    if ($raw === false || !is_array($result) || ($result['status'] ?? '') !== 'SUCCESS' || empty($result['drive_file_id']) || empty($result['pdf_url'])) {
+        $detail = is_array($result) ? (string)($result['message'] ?? '') : '';
+        if ($detail === '') $detail = $curlError ?: ('Google Apps Script ตอบกลับไม่สำเร็จ (HTTP ' . $httpCode . ')');
+        return ['success' => false, 'message' => $detail];
+    }
+
+    $update = $pdo->prepare("UPDATE certificates SET drive_file_id = ?, drive_url = ?, google_slide_template_id = ?, slide_url = ? WHERE id = ?");
+    $update->execute([
+        $result['drive_file_id'],
+        $result['pdf_url'],
+        $templateId,
+        'https://docs.google.com/presentation/d/' . $templateId . '/edit',
+        $certificate['id']
+    ]);
+    return ['success' => true, 'message' => 'บันทึก PDF ลง Google Drive สำเร็จ'];
+}
+
+/** ซิงค์เฉพาะเกียรติบัตรที่ยังไม่มีลิงก์ PDF บน Google Drive */
+function syncPendingCertificatesToGoogleDrive(PDO $pdo, array $competition, ?string $eventId = null): array {
+    if (!ensureGoogleDriveColumns($pdo)) return ['success' => 0, 'failed' => 0, 'message' => 'ไม่สามารถสร้างคอลัมน์ Google Drive ในฐานข้อมูลได้'];
+    $sql = "SELECT * FROM certificates WHERE (drive_url IS NULL OR drive_url = '')";
+    $params = [];
+    if ($eventId) { $sql .= " AND event_id = ?"; $params[] = $eventId; }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $success = 0; $failed = 0; $lastError = '';
+    foreach ($stmt->fetchAll() as $certificate) {
+        $sync = syncCertificateToGoogleDrive($pdo, $certificate, $competition);
+        if ($sync['success']) $success++; else { $failed++; $lastError = $sync['message']; }
+    }
+    return ['success' => $success, 'failed' => $failed, 'message' => $lastError];
+}
+
+/**
  * ฟังก์ชันช่วยออกเกียรติบัตรแบบกลุ่มจากผลการแข่งขัน
  */
 function batchGenerateCertificatesHelper(
@@ -467,13 +568,14 @@ if (isset($_POST['generate_from_results']) || isset($_POST['generate_single_even
         $genRes = batchGenerateCertificatesHelper($pdo, $hasSlideCols, $compId, $certPrefix, $studentSlideTpl, $studentSlideUrl, $coachSlideTpl, $coachSlideUrl, $targetEventId);
         $newCount = $genRes['newCount'];
         $skippedCount = $genRes['skippedCount'];
+        $driveSync = syncPendingCertificatesToGoogleDrive($pdo, $comp, $targetEventId ?: null);
 
         if ($genRes['totalResults'] === 0) {
             $error = "ไม่พบรายการผลการแข่งขันที่บันทึกไว้ในระบบ กรุณาบันทึกผลการแข่งขันในเมนู \"ประกาศผลการแข่งขัน\" ก่อน";
         } else {
             logActivity('GENERATE_CERTS', 'CERTIFICATES', "ประมวลผลออกเกียรติบัตร: สร้างใหม่ $newCount ฉบับ (เคยมีแล้ว $skippedCount ฉบับ)");
             if ($newCount > 0) {
-                $message = "🎉 ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ! (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
+                $message = "🎉 ประมวลผลและสร้างเลขที่เกียรติบัตรใหม่สำเร็จ $newCount ฉบับ! ซิงค์ PDF ลง Google Drive สำเร็จ {$driveSync['success']} ฉบับ" . ($driveSync['failed'] > 0 ? " (ไม่สำเร็จ {$driveSync['failed']} ฉบับ: {$driveSync['message']})" : '') . " (มีอยู่เดิมแล้ว $skippedCount ฉบับ)";
             } else {
                 $message = "ℹ️ รายการนี้ได้เคยออกเกียรติบัตรไปครบถ้วนแล้วทั้งหมด ($skippedCount ฉบับ) ไม่มีรายการตกค้าง!";
             }
@@ -625,95 +727,6 @@ require_once __DIR__ . '/../includes/header.php';
             </form>
         </div>
     <?php endif; ?>
-
-    <!-- SECTION GOOGLE APPS SCRIPT & CLOUD PDF TEMPLATE INTEGRATION -->
-    <div class="bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-transparent border-2 border-amber-300 rounded-3xl p-6 shadow-sm space-y-4">
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-amber-200/60 pb-4">
-            <div class="flex items-start gap-3.5">
-                <div class="p-3 bg-amber-600 text-white rounded-2xl shadow-sm text-xl shrink-0">
-                    📜
-                </div>
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h2 class="text-base font-bold font-kanit text-amber-950">
-                            ระบบออกและพิมพ์เกียรติบัตร PDF อัตโนมัติ (Google Apps Script + Google Drive)
-                        </h2>
-                        <span class="px-2.5 py-0.5 bg-amber-200/80 text-amber-900 border border-amber-300 rounded-full text-[11px] font-bold">
-                            เชื่อมต่อระบบคลาวด์
-                        </span>
-                    </div>
-                    <p class="text-xs text-amber-900/80 mt-1">
-                        ระบบผสานข้อมูลผลการแข่งขันเข้ากับแม่แบบใน Google Drive ผ่าน Google Apps Script เพื่อออกและดาวน์โหลดเป็นไฟล์ PDF ได้ทันที โดยผู้ใช้งานไม่จำเป็นต้องเปิดเข้าไปใน Google นำเสนอ
-                    </p>
-                </div>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2 shrink-0">
-                <form method="POST" onsubmit="return confirm('⚡ ยืนยันการนำ ID แม่แบบมาประมวลผลออกเกียรติบัตรทุกรายการที่รอ และผูกข้อมูลให้กับเกียรติบัตรทั้งหมดใช่หรือไม่?')">
-                    <button type="submit" name="apply_google_slides_to_all" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer">
-                        <span>⚡</span> นำ ID แม่แบบมาออกเกียรติบัตรทั้งหมด (<?= number_format($totalCerts) ?> ฉบับ)
-                    </button>
-                </form>
-                <a href="/admin/settings.php#templates" class="px-3.5 py-2.5 bg-white hover:bg-amber-50 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 transition flex items-center gap-1.5">
-                    <span>⚙️</span> ตั้งค่า Google Apps Script & แม่แบบ
-                </a>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <!-- Student Template Card -->
-            <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
-                <div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-blue-900 flex items-center gap-1.5 font-kanit">
-                            <span>🎓</span> แม่แบบเกียรติบัตรนักเรียน (Student Template ID)
-                        </span>
-                        <?php if (!empty($studentSlideTpl)): ?>
-                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
-                        <?php else: ?>
-                            <span class="px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
-                        <?php endif; ?>
-                    </div>
-                    <p class="font-mono text-xs text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-2 truncate select-all">
-                        <?= htmlspecialchars($studentSlideTpl ?: '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)') ?>
-                    </p>
-                </div>
-                <?php if (!empty($studentSlideTpl)): ?>
-                    <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
-                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($studentSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>📥</span> ดาวน์โหลดตัวอย่าง PDF แม่แบบนักเรียน
-                        </a>
-                    </div>
-                <?php endif; ?>
-            </div>
-
-            <!-- Coach Template Card -->
-            <div class="p-4 bg-white rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between gap-3">
-                <div>
-                    <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5 font-kanit">
-                            <span>👨‍🏫</span> แม่แบบเกียรติบัตรครูผู้ฝึกสอน (Coach Template ID)
-                        </span>
-                        <?php if (!empty($coachSlideTpl)): ?>
-                            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">พร้อมใช้งาน</span>
-                        <?php else: ?>
-                            <span class="px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded">ยังไม่ระบุ</span>
-                        <?php endif; ?>
-                    </div>
-                    <p class="font-mono text-xs text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-200 mt-2 truncate select-all">
-                        <?= htmlspecialchars($coachSlideTpl ?: '(ยังไม่ได้ตั้งค่า ID ในเมนูตั้งค่า)') ?>
-                    </p>
-                </div>
-                <?php if (!empty($coachSlideTpl)): ?>
-                    <div class="flex items-center gap-3 pt-2 border-t border-slate-100 text-xs">
-                        <a href="https://docs.google.com/presentation/d/<?= htmlspecialchars($coachSlideTpl) ?>/export/pdf" target="_blank" class="text-amber-700 hover:underline flex items-center gap-1 text-[11px] font-semibold">
-                            <span>📥</span> ดาวน์โหลดตัวอย่าง PDF แม่แบบครู
-                        </a>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
 
     <!-- SECTION 1: รายการที่รอออกเกียรติบัตร (Pending Events) -->
     <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
