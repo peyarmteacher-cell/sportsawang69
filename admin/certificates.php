@@ -138,6 +138,14 @@ function ensureGoogleDriveColumns(PDO $pdo): bool {
     }
 }
 
+/** จัดรูปแบบชื่อรายการสำหรับข้อความบนเกียรติบัตร: ตัดคำอังกฤษนำหน้าและวงเล็บเหลี่ยม */
+function formatCertificateEventName(string $eventName): string {
+    $formatted = trim($eventName);
+    $formatted = preg_replace('/^[A-Za-z0-9 .,&'\/-]+(?=\p{Thai})/u', '', $formatted) ?? $formatted;
+    $formatted = preg_replace('/\[([^\]]+)\]/u', ' $1', $formatted) ?? $formatted;
+    return trim(preg_replace('/\s+/u', ' ', $formatted) ?? $formatted);
+}
+
 /** ส่งข้อมูลเกียรติบัตรไปยัง Google Apps Script และบันทึก PDF URL ที่ตอบกลับ */
 function syncCertificateToGoogleDrive(PDO $pdo, array $certificate, array $competition): array {
     $endpoint = trim((string)($competition['google_apps_script_url'] ?? ''));
@@ -167,7 +175,7 @@ function syncCertificateToGoogleDrive(PDO $pdo, array $certificate, array $compe
         'recipient_name' => $certificate['recipient_name'],
         'school_name' => $certificate['school_name'],
         'award' => $certificate['award'],
-        'event_name' => $certificate['event_name'],
+        'event_name' => formatCertificateEventName((string)$certificate['event_name']),
         'sport_name' => $certificate['sport_name'],
         'academic_year' => $competition['academic_year'] ?? $competition['year'] ?? '',
         'issue_date' => $certificate['issue_date'],
@@ -191,7 +199,10 @@ function syncCertificateToGoogleDrive(PDO $pdo, array $certificate, array $compe
     $curlError = curl_error($curl);
     curl_close($curl);
     $result = is_string($raw) ? json_decode($raw, true) : null;
-    if ($raw === false || !is_array($result) || ($result['status'] ?? '') !== 'SUCCESS' || empty($result['drive_file_id']) || empty($result['pdf_url'])) {
+    $driveFileId = is_array($result) ? (string)($result['drive_file_id'] ?? $result['file_id'] ?? $result['id'] ?? '') : '';
+    $pdfUrl = is_array($result) ? (string)($result['pdf_url'] ?? $result['download_url'] ?? $result['drive_url'] ?? $result['pdfUrl'] ?? $result['downloadUrl'] ?? '') : '';
+    if ($pdfUrl === '' && $driveFileId !== '') $pdfUrl = 'https://drive.google.com/file/d/' . rawurlencode($driveFileId) . '/view';
+    if ($raw === false || !is_array($result) || ($result['status'] ?? '') !== 'SUCCESS' || $driveFileId === '' || $pdfUrl === '') {
         $detail = is_array($result) ? (string)($result['message'] ?? '') : '';
         if ($detail === '') $detail = $curlError ?: ('Google Apps Script ตอบกลับไม่สำเร็จ (HTTP ' . $httpCode . ')');
         return ['success' => false, 'message' => $detail];
@@ -199,8 +210,8 @@ function syncCertificateToGoogleDrive(PDO $pdo, array $certificate, array $compe
 
     $update = $pdo->prepare("UPDATE certificates SET drive_file_id = ?, drive_url = ?, google_slide_template_id = ?, slide_url = ? WHERE id = ?");
     $update->execute([
-        $result['drive_file_id'],
-        $result['pdf_url'],
+        $driveFileId,
+        $pdfUrl,
         $templateId,
         'https://docs.google.com/presentation/d/' . $templateId . '/edit',
         $certificate['id']
@@ -912,8 +923,8 @@ require_once __DIR__ . '/../includes/header.php';
                         💡 วิธีดาวน์โหลดเกียรติบัตรเป็นไฟล์ PDF หรือสั่งพิมพ์
                     </h4>
                     <p class="text-amber-900/90 mt-1 leading-relaxed">
-                        1. กดปุ่มสีส้ม <span class="bg-amber-600 text-white px-2 py-0.5 rounded font-bold text-[11px]">📥 พิมพ์ / PDF</span> ที่แถวรายชื่อของแต่ละบุคคล<br/>
-                        2. หน้าต่างเกียรติบัตรฉบับเต็มจะเปิดขึ้นมา ให้กดปุ่ม <strong>"📥 ดาวน์โหลด PDF / พิมพ์เกียรติบัตร"</strong> แล้วเลือกเครื่องพิมพ์เป็น <strong>"Save as PDF" (บันทึกเป็น PDF)</strong> หรือเลือกเครื่องพิมพ์ของท่านเพื่อสั่งพิมพ์ได้ทันที
+                        1. กดปุ่ม <span class="bg-emerald-600 text-white px-2 py-0.5 rounded font-bold text-[11px]">📥 พิมพ์ / PDF (Google Drive)</span> เพื่อเปิดไฟล์ PDF ต้นฉบับที่ Google Drive สร้างจากแม่แบบ Google Slides<br/>
+                        2. หากรายการใดยังไม่มีไฟล์ Google Drive ระบบจะแสดงปุ่มพิมพ์สำรองของเว็บไซต์แทน
                     </p>
                 </div>
             </div>
@@ -1005,13 +1016,14 @@ require_once __DIR__ . '/../includes/header.php';
                                 </td>
                                 <td class="p-3.5 pr-6 text-right space-x-1.5 whitespace-nowrap">
                                     <?php if (!empty($c['drive_url'])): ?>
-                                        <a href="<?= htmlspecialchars($c['drive_url']) ?>" target="_blank" class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition" title="ดาวน์โหลดไฟล์ PDF จาก Google Drive">
-                                            📥 PDF (Drive)
+                                        <a href="<?= htmlspecialchars($c['drive_url']) ?>" target="_blank" rel="noopener" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs" title="เปิดไฟล์ PDF ต้นฉบับจาก Google Drive">
+                                            📥 พิมพ์ / PDF (Google Drive)
+                                        </a>
+                                    <?php else: ?>
+                                        <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs" title="ยังไม่มีไฟล์ Google Drive จึงเปิดหน้าพิมพ์สำรองของระบบ">
+                                            📥 พิมพ์ / PDF
                                         </a>
                                     <?php endif; ?>
-                                    <a href="/print_certificate.php?id=<?= urlencode($c['id']) ?>" target="_blank" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1 transition shadow-2xs" title="เปิดหน้าพิมพ์ / บันทึกเป็นไฟล์ PDF ทันที">
-                                        📥 พิมพ์ / PDF
-                                    </a>
                                     <a href="/verify.php?token=<?= urlencode($c['qr_token'] ?? $c['certificate_no']) ?>" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition">
                                         🔍 QR
                                     </a>
