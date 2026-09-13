@@ -141,7 +141,7 @@ function ensureGoogleDriveColumns(PDO $pdo): bool {
 /** จัดรูปแบบชื่อรายการสำหรับข้อความบนเกียรติบัตร: ตัดคำอังกฤษนำหน้าและวงเล็บเหลี่ยม */
 function formatCertificateEventName(string $eventName): string {
     $formatted = trim($eventName);
-    $formatted = preg_replace('/^[A-Za-z0-9 .,&'\/-]+(?=\p{Thai})/u', '', $formatted) ?? $formatted;
+    $formatted = preg_replace('/^[A-Za-z0-9 .,&\/-]+(?=\p{Thai})/u', '', $formatted) ?? $formatted;
     $formatted = preg_replace('/\[([^\]]+)\]/u', ' $1', $formatted) ?? $formatted;
     return trim(preg_replace('/\s+/u', ' ', $formatted) ?? $formatted);
 }
